@@ -1066,12 +1066,13 @@ sm83Instructions.forEach(function (instr) {
   doc += '<tr><td>Flag N:<td>' + instr['flags']['n'];
   doc += '<tr><td>Flag H:<td>' + instr['flags']['H'];
   doc += '<tr><td>Flag C:<td>' + instr['flags']['C'];
-  sm83CompleterInstructions.push({
+  var i = {
     caption: instr['name'],
     value: instr['name'],
     meta: '',
     docHTML: doc,
-  });
+  };
+  sm83CompleterInstructions.push(i);
 });
 var sm83CompleterConstants = [];
 for (var key in gameboy_hardware_constants) {
