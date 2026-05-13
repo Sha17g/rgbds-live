@@ -1066,19 +1066,12 @@ sm83Instructions.forEach(function (instr) {
   doc += '<tr><td>Flag N:<td>' + instr['flags']['n'];
   doc += '<tr><td>Flag H:<td>' + instr['flags']['H'];
   doc += '<tr><td>Flag C:<td>' + instr['flags']['C'];
-  var i = {
+  sm83CompleterInstructions.push({
     caption: instr['name'],
     value: instr['name'],
     meta: '',
     docHTML: doc,
-  };
-  i.completer = {
-    insertMatch: function (editor, data) {
-      //editor.completer.insertMatch({value: data.value.split(" ")[0]});
-      //editor.selection.selectTo(editor.selection.cursor.row, editor.selection.cursor.column - offset);
-    },
-  };
-  sm83CompleterInstructions.push(i);
+  });
 });
 var sm83CompleterConstants = [];
 for (var key in gameboy_hardware_constants) {
