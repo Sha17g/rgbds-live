@@ -59,6 +59,51 @@ export function register(div_id, compileCode) {
     event.stop();
   });
 
+  // Font size control via keyboard shortcuts (Ctrl+=/-, Ctrl+0)
+  (function () {
+    var DEFAULT_SIZE = 14;
+    var MIN_SIZE = 8;
+    var MAX_SIZE = 32;
+    var STORAGE_KEY = 'aceFontSize';
+
+    var currentSize = parseInt(localStorage.getItem(STORAGE_KEY)) || DEFAULT_SIZE;
+    e.setFontSize(currentSize + 'px');
+
+    e.commands.addCommand({
+      name: 'increaseFontSize',
+      bindKey: { win: 'Ctrl-=', mac: 'Command-=' },
+      exec: function () {
+        if (currentSize < MAX_SIZE) {
+          currentSize++;
+          e.setFontSize(currentSize + 'px');
+          localStorage.setItem(STORAGE_KEY, currentSize);
+        }
+      },
+    });
+
+    e.commands.addCommand({
+      name: 'decreaseFontSize',
+      bindKey: { win: 'Ctrl--', mac: 'Command--' },
+      exec: function () {
+        if (currentSize > MIN_SIZE) {
+          currentSize--;
+          e.setFontSize(currentSize + 'px');
+          localStorage.setItem(STORAGE_KEY, currentSize);
+        }
+      },
+    });
+
+    e.commands.addCommand({
+      name: 'resetFontSize',
+      bindKey: { win: 'Ctrl-0', mac: 'Command-0' },
+      exec: function () {
+        currentSize = DEFAULT_SIZE;
+        e.setFontSize(currentSize + 'px');
+        localStorage.setItem(STORAGE_KEY, currentSize);
+      },
+    });
+  })();
+
   editors.push(e);
 }
 
