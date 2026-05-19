@@ -38,10 +38,11 @@ export function register(div_id, compileCode) {
     tabSize: 2,
     useSoftTabs: true,
     navigateWithinSoftTabs: true,
+    enableBasicAutocompletion: true,
     enableLiveAutocompletion: true,
     enableSnippets: true,
   });
-  e.completers = [sm83Completer];
+  ace.require('ace/ext/language_tools').addCompleter(sm83Completer);
 
   e.session.on('change', function (delta) {
     if (e.curOp && e.curOp.command.name) {
