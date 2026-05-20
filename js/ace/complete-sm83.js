@@ -1072,12 +1072,6 @@ sm83Instructions.forEach(function (instr) {
     meta: '',
     docHTML: doc,
   };
-  i.completer = {
-    insertMatch: function (editor, data) {
-      editor.completer.insertMatch({value: data.value.split(" ")[0]});
-      //editor.selection.selectTo(editor.selection.cursor.row, editor.selection.cursor.column - offset);
-    },
-  };
   sm83CompleterInstructions.push(i);
 });
 var sm83CompleterConstants = [];
@@ -1118,6 +1112,15 @@ var sm83Completer = {
           return c.value.toLowerCase().startsWith(prefix.toLowerCase());
         }),
       );
+    }
+  },
+  insertMatch: function (editor, data) {
+    if (window._insertMatchOnly) {
+      // Insert only the first word (the instruction name) followed by a space
+      var instructionName = data.value.split(' ')[0];
+      editor.completer.insertMatch({ value: instructionName + ' ' });
+    } else {
+      editor.completer.insertMatch(data);
     }
   },
 };
