@@ -1098,29 +1098,27 @@ var sm83Completer = {
     var line = session.getLine(pos.row);
     // Check if we are possibly typing an instruction.
     var before = line.substr(0, pos.column - 1).trim();
+    var matches;
     if (before.trim() == '' || before.trim().endsWith(':')) {
-      callback(
-        null,
-        sm83CompleterInstructions.filter(function (c) {
-          return c.value.startsWith(prefix.toLowerCase());
-        }),
-      );
+      matches = sm83CompleterInstructions.filter(function (c) {
+        return c.value.startsWith(prefix.toLowerCase());
+      });
     } else {
-      callback(
-        null,
-        sm83CompleterConstants.filter(function (c) {
-          return c.value.toLowerCase().startsWith(prefix.toLowerCase());
-        }),
-      );
+      matches = sm83CompleterConstants.filter(function (c) {
+        return c.value.toLowerCase().startsWith(prefix.toLowerCase());
+      });
     }
-  },
-  insertMatch: function (editor, data) {
-    if (window._insertMatchOnly) {
-      // Insert only the first word (the instruction name) followed by a space
-      var instructionName = data.value.split(' ')[0];
-      editor.completer.insertMatch({ value: instructionName + ' ' });
+    // If "Insert instruction only" is disabled, disable all auto completions.
+    // If enabled, truncate each completion's value to only the first word
+    // (the instruction name / label) so Ace only inserts that part.
+    if (!window._insertMatchOnly) {
+      callback(null, []);
     } else {
-      editor.completer.insertMatch(data);
+      matches = matches.map(function (item) {
+        var firstWord = item.value.split(' ')[0];
+        return Object.assign({}, item, { value: firstWord + ' ' });
+      });
+      callback(null, matches);
     }
   },
 };
