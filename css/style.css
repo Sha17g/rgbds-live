@@ -339,11 +339,47 @@ canvas {
   overflow: auto;
 }
 
-.emulator {
+#emulator-wrapper {
   grid-column: 3;
   grid-row: 2 / 4;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
+
+.emulator {
+  flex: 1;
+  overflow: auto;
+  border-bottom: 2px solid var(--border-color);
+  padding: 4px;
+}
+
+.emulator:last-child {
+  border-bottom: none;
+}
+
+.emu-selector {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-color);
+  margin-bottom: 4px;
+}
+
+.emu-selector label {
+  font-weight: bold;
+}
+
+.emu-selector select {
+  padding: 2px 4px;
+  max-width: 180px;
+}
+
+.emu-selector button {
+  padding: 2px 12px;
+}
+
 .console {
   grid-column: 1 / 3;
   grid-row: 3;
@@ -369,25 +405,25 @@ canvas {
 }
 
 .emulator_screen_container {
-  width: 512px;
-  height: 512px;
+  width: 320px;
+  height: 320px;
 }
 .emulator_canvas_screen {
-  width: 480px;
+  width: 300px;
 }
 .emulator_vram_screen {
-  width: 512px;
+  width: 320px;
 }
 
 @media only screen and (max-height: 600px), only screen and (max-width: 1024px) {
   .emulator_screen_container {
-    height: 256px;
+    height: 160px;
   }
   .emulator_canvas_screen {
-    width: 240px;
+    width: 150px;
   }
   .emulator_vram_screen {
-    width: 256px;
+    width: 160px;
   }
 }
 

@@ -114,95 +114,201 @@
         </div>
       </div>
       <div class="editor" id="nullEditorDiv">Cannot edit selected file.</div>
-      <div class="emulator">
-        <table>
-          <tr>
-            <td>
-              <div class="tabs">
-                <input type="radio" name="emulator_display_mode" id="emulator_display_screen" checked />
-                <label for="emulator_display_screen">Screen</label>
-                <input type="radio" name="emulator_display_mode" id="emulator_display_vram" />
-                <label for="emulator_display_vram">VRAM</label>
-                <input type="radio" name="emulator_display_mode" id="emulator_display_bg0" />
-                <label for="emulator_display_bg0">BG0</label>
-                <input type="radio" name="emulator_display_mode" id="emulator_display_bg1" />
-                <label for="emulator_display_bg1">BG1</label>
-                <input type="radio" name="emulator_display_mode" id="emulator_display_rom" />
-                <label for="emulator_display_rom">ROM</label>
-                <input type="radio" name="emulator_display_mode" id="emulator_display_wram" />
-                <label for="emulator_display_wram">WRAM</label>
-                <input type="radio" name="emulator_display_mode" id="emulator_display_hram" />
-                <label for="emulator_display_hram">HRAM</label>
-                <input type="radio" name="emulator_display_mode" id="emulator_display_io" />
-                <label for="emulator_display_io">I/O</label>
-                <input type="radio" name="emulator_display_mode" id="emulator_display_serial" />
-                <label for="emulator_display_serial">Serial</label>
-              </div>
-              <div class="emulator_screen_container" id="emulator_screen_container">
-                <canvas class="emulator_canvas_screen" id="emulator_screen_canvas" width="160" height="144"></canvas>
-                <canvas
-                  class="emulator_vram_screen"
-                  id="emulator_vram_canvas"
-                  width="256"
-                  height="256"
-                  style="display: none"
-                ></canvas>
-                <pre
-                  style="height: 100%; width: 100%; display: none; overflow: scroll"
-                  id="emulator_display_text"
-                ></pre>
-              </div>
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <button id="download_rom">Download</button>
-              <button id="cpu_single_step">Step</button>
-              <button id="cpu_frame_step">Frame</button>
-              <label style="padding: 4px 16px">
-                <input id="cpu_run_check" type="checkbox" />
-                Run
-              </label>
-              <button id="cpu_reset">Reset</button>
-            </td>
-          </tr>
-          <tr>
-            <td>
-              <table class="data_table" style="width: 50%">
-                <colgroup>
-                  <col />
-                  <col style="width: 50%" />
-                  <col />
-                  <col style="width: 50%" />
-                </colgroup>
-                <tr>
-                  <th class="right">PC:</th>
-                  <td id="cpu_pc">-</td>
-                  <th class="right">A:</th>
-                  <td id="cpu_a">-</td>
-                </tr>
-                <tr>
-                  <th class="right">SP:</th>
-                  <td id="cpu_sp">-</td>
-                  <th class="right">BC:</th>
-                  <td id="cpu_bc">-</td>
-                </tr>
-                <tr>
-                  <th class="right">Flags:</th>
-                  <td id="cpu_flags">-</td>
-                  <th class="right">DE:</th>
-                  <td id="cpu_de">-</td>
-                </tr>
-                <tr>
-                  <th class="right">Serial:</th>
-                  <td id="serial_log">-</td>
-                  <th class="right">HL:</th>
-                  <td id="cpu_hl">-</td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-        </table>
+      <div id="emulator-wrapper">
+        <div class="emulator" id="emu-panel-0">
+          <div class="emu-selector">
+            <label>Emulator 1</label>
+            <select id="emu-file-select_0">
+              <option value="">-- Choose a file --</option>
+            </select>
+            <button id="emu-compile_0">Compile</button>
+            <button id="download_rom_0">Download</button>
+          </div>
+          <table>
+            <tr>
+              <td>
+                <div class="tabs">
+                  <input type="radio" name="emulator_display_mode_0" id="emulator_display_screen_0" checked />
+                  <label for="emulator_display_screen_0">Screen</label>
+                  <input type="radio" name="emulator_display_mode_0" id="emulator_display_vram_0" />
+                  <label for="emulator_display_vram_0">VRAM</label>
+                  <input type="radio" name="emulator_display_mode_0" id="emulator_display_bg0_0" />
+                  <label for="emulator_display_bg0_0">BG0</label>
+                  <input type="radio" name="emulator_display_mode_0" id="emulator_display_bg1_0" />
+                  <label for="emulator_display_bg1_0">BG1</label>
+                  <input type="radio" name="emulator_display_mode_0" id="emulator_display_rom_0" />
+                  <label for="emulator_display_rom_0">ROM</label>
+                  <input type="radio" name="emulator_display_mode_0" id="emulator_display_wram_0" />
+                  <label for="emulator_display_wram_0">WRAM</label>
+                  <input type="radio" name="emulator_display_mode_0" id="emulator_display_hram_0" />
+                  <label for="emulator_display_hram_0">HRAM</label>
+                  <input type="radio" name="emulator_display_mode_0" id="emulator_display_io_0" />
+                  <label for="emulator_display_io_0">I/O</label>
+                  <input type="radio" name="emulator_display_mode_0" id="emulator_display_serial_0" />
+                  <label for="emulator_display_serial_0">Serial</label>
+                </div>
+                <div class="emulator_screen_container" id="emulator_screen_container_0">
+                  <canvas class="emulator_canvas_screen" id="emulator_screen_canvas_0" width="160" height="144"></canvas>
+                  <canvas
+                    class="emulator_vram_screen"
+                    id="emulator_vram_canvas_0"
+                    width="256"
+                    height="256"
+                    style="display: none"
+                  ></canvas>
+                  <pre
+                    style="height: 100%; width: 100%; display: none; overflow: scroll"
+                    id="emulator_display_text_0"
+                  ></pre>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <button id="cpu_single_step_0">Step</button>
+                <button id="cpu_frame_step_0">Frame</button>
+                <label style="padding: 4px 16px">
+                  <input id="cpu_run_check_0" type="checkbox" />
+                  Run
+                </label>
+                <button id="cpu_reset_0">Reset</button>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <table class="data_table" style="width: 50%">
+                  <colgroup>
+                    <col />
+                    <col style="width: 50%" />
+                    <col />
+                    <col style="width: 50%" />
+                  </colgroup>
+                  <tr>
+                    <th class="right">PC:</th>
+                    <td id="cpu_pc_0">-</td>
+                    <th class="right">A:</th>
+                    <td id="cpu_a_0">-</td>
+                  </tr>
+                  <tr>
+                    <th class="right">SP:</th>
+                    <td id="cpu_sp_0">-</td>
+                    <th class="right">BC:</th>
+                    <td id="cpu_bc_0">-</td>
+                  </tr>
+                  <tr>
+                    <th class="right">Flags:</th>
+                    <td id="cpu_flags_0">-</td>
+                    <th class="right">DE:</th>
+                    <td id="cpu_de_0">-</td>
+                  </tr>
+                  <tr>
+                    <th class="right">Serial:</th>
+                    <td id="serial_log_0">-</td>
+                    <th class="right">HL:</th>
+                    <td id="cpu_hl_0">-</td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </div>
+        <div class="emulator" id="emu-panel-1">
+          <div class="emu-selector">
+            <label>Emulator 2</label>
+            <select id="emu-file-select_1">
+              <option value="">-- Choose a file --</option>
+            </select>
+            <button id="emu-compile_1">Compile</button>
+            <button id="download_rom_1">Download</button>
+          </div>
+          <table>
+            <tr>
+              <td>
+                <div class="tabs">
+                  <input type="radio" name="emulator_display_mode_1" id="emulator_display_screen_1" checked />
+                  <label for="emulator_display_screen_1">Screen</label>
+                  <input type="radio" name="emulator_display_mode_1" id="emulator_display_vram_1" />
+                  <label for="emulator_display_vram_1">VRAM</label>
+                  <input type="radio" name="emulator_display_mode_1" id="emulator_display_bg0_1" />
+                  <label for="emulator_display_bg0_1">BG0</label>
+                  <input type="radio" name="emulator_display_mode_1" id="emulator_display_bg1_1" />
+                  <label for="emulator_display_bg1_1">BG1</label>
+                  <input type="radio" name="emulator_display_mode_1" id="emulator_display_rom_1" />
+                  <label for="emulator_display_rom_1">ROM</label>
+                  <input type="radio" name="emulator_display_mode_1" id="emulator_display_wram_1" />
+                  <label for="emulator_display_wram_1">WRAM</label>
+                  <input type="radio" name="emulator_display_mode_1" id="emulator_display_hram_1" />
+                  <label for="emulator_display_hram_1">HRAM</label>
+                  <input type="radio" name="emulator_display_mode_1" id="emulator_display_io_1" />
+                  <label for="emulator_display_io_1">I/O</label>
+                  <input type="radio" name="emulator_display_mode_1" id="emulator_display_serial_1" />
+                  <label for="emulator_display_serial_1">Serial</label>
+                </div>
+                <div class="emulator_screen_container" id="emulator_screen_container_1">
+                  <canvas class="emulator_canvas_screen" id="emulator_screen_canvas_1" width="160" height="144"></canvas>
+                  <canvas
+                    class="emulator_vram_screen"
+                    id="emulator_vram_canvas_1"
+                    width="256"
+                    height="256"
+                    style="display: none"
+                  ></canvas>
+                  <pre
+                    style="height: 100%; width: 100%; display: none; overflow: scroll"
+                    id="emulator_display_text_1"
+                  ></pre>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <button id="cpu_single_step_1">Step</button>
+                <button id="cpu_frame_step_1">Frame</button>
+                <label style="padding: 4px 16px">
+                  <input id="cpu_run_check_1" type="checkbox" />
+                  Run
+                </label>
+                <button id="cpu_reset_1">Reset</button>
+              </td>
+            </tr>
+            <tr>
+              <td>
+                <table class="data_table" style="width: 50%">
+                  <colgroup>
+                    <col />
+                    <col style="width: 50%" />
+                    <col />
+                    <col style="width: 50%" />
+                  </colgroup>
+                  <tr>
+                    <th class="right">PC:</th>
+                    <td id="cpu_pc_1">-</td>
+                    <th class="right">A:</th>
+                    <td id="cpu_a_1">-</td>
+                  </tr>
+                  <tr>
+                    <th class="right">SP:</th>
+                    <td id="cpu_sp_1">-</td>
+                    <th class="right">BC:</th>
+                    <td id="cpu_bc_1">-</td>
+                  </tr>
+                  <tr>
+                    <th class="right">Flags:</th>
+                    <td id="cpu_flags_1">-</td>
+                    <th class="right">DE:</th>
+                    <td id="cpu_de_1">-</td>
+                  </tr>
+                  <tr>
+                    <th class="right">Serial:</th>
+                    <td id="serial_log_1">-</td>
+                    <th class="right">HL:</th>
+                    <td id="cpu_hl_1">-</td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </div>
       </div>
       <div class="console">
         <pre id="output" class="output" readonly></pre>

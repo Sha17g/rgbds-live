@@ -59,6 +59,158 @@ export function compile(callback) {
   }
 }
 
+/**
+ * Compile a single .asm file into a standalone ROM.
+ * This bypasses the "all .asm files linked together" behavior,
+ * allowing two different programs to be compiled independently
+ * for the two emulator instances.
+ */
+export function compileSingleFile(filename, callback) {
+  if (log_callback) log_callback(null, null);
+
+  var local_errors = [];
+  var log = function (str, kind) {
+    if (log_callback) log_callback(str, kind);
+    if (kind == 'stderr' && (str.startsWith('error: ') || str.startsWith('ERROR: ') || str.startsWith('warning: '))) {
+      var type = str.startsWith('warning: ') ? 'warning' : 'error';
+      var line_nr_match = str.matchAll(line_nr_regex);
+      for (var m of line_nr_match) {
+        var error_line = parseInt(m[2]);
+        local_errors.push([type, m[1], error_line, str]);
+      }
+    }
+  };
+
+  var infoLog = function (str) { log(str, 'info'); };
+  var outLog = function (str) { log(str, 'stdout'); };
+  var errLog = function (str) { log(str, 'stderr'); };
+
+  // Step 1: rgbasm — compile single .asm → output.o
+  var asm_args = ['-Wall', ...asm_options, '--color', 'never', '-o', 'output.o', '--', filename];
+  infoLog('Running: rgbasm ' + asm_args.join(' '));
+  createRgbAsm({
+    arguments: asm_args,
+    preRun: function (m) {
+      var FS = m.FS;
+      for (const [key, value] of Object.entries(storage.getFiles())) {
+        FS.writeFile(key, value);
+      }
+    },
+    print: outLog,
+    printErr: errLog,
+  }).then(function (m) {
+    var FS = m.FS;
+    var obj_file;
+    try { obj_file = FS.readFile('output.o'); } catch { callback(); return; }
+
+    // Step 2: rgblink — link single .o → output.gb + output.map
+    var link_args = ['--color', 'never', '-o', 'output.gb', ...link_options, '-m', 'output.map', '--', 'output.o'];
+    infoLog('Running: rgblink ' + link_args.join(' '));
+    createRgbLink({
+      arguments: link_args,
+      preRun: function (m2) {
+        var FS2 = m2.FS;
+        FS2.writeFile('output.o', obj_file);
+      },
+      print: outLog,
+      printErr: errLog,
+    }).then(function (m2) {
+      var FS2 = m2.FS;
+      var rom_file;
+      try { rom_file = FS2.readFile('output.gb'); } catch { callback(); return; }
+      var map_file;
+      try { map_file = FS2.readFile('output.map', { encoding: 'utf8' }); } catch { callback(); return; }
+
+      // Step 3: rgbfix — fix header checksums
+      var fix_args = ['--color', 'never', '-p', '0xff', '-v', ...fix_options, '--', 'output.gb'];
+      infoLog('Running: rgbfix ' + fix_args.join(' '));
+      createRgbFix({
+        arguments: fix_args,
+        preRun: function (m3) {
+          var FS3 = m3.FS;
+          FS3.writeFile('output.gb', rom_file);
+        },
+        print: outLog,
+        printErr: errLog,
+      }).then(function (m3) {
+        var FS3 = m3.FS;
+        var final_rom;
+        try { final_rom = FS3.readFile('output.gb'); } catch { callback(); return; }
+
+        // Parse map file for symbols (same logic as buildDone)
+        var start_address = 0x100;
+        var addr_to_line = {};
+        var sym_re = /^\s*\$([0-9a-f]+) = ([\w\.]+)/;
+        var section_type_bank_re = /^\s*(\w+) bank #(\d+)/;
+        var section_re = /^\s*SECTION: \$([0-9a-f]+)-\$([0-9a-f]+)/;
+        var slack_re = /^\s*SLACK: \$([0-9a-f]+) bytes/;
+        var section_type = '';
+        var bank_nr = 0;
+
+        for (var line of map_file.split('\n')) {
+          var rm;
+          if ((rm = sym_re.exec(line))) {
+            var addr = parseInt(rm[1], 16);
+            var sym = rm[2];
+            if (sym.startsWith('__SEC_')) {
+              sym = sym.substr(6);
+              var file = sym.substr(sym.indexOf('_') + 1);
+              file = file.substr(file.indexOf('_') + 1);
+              var line_nr = parseInt(sym.split('_')[1], 16);
+              addr = (addr & 0x3fff) | (bank_nr << 14);
+              addr_to_line[addr] = [file, line_nr];
+            } else if (sym == 'emustart' || sym == 'emuStart' || sym == 'emu_start') {
+              start_address = addr;
+            } else if (addr < 0x8000) {
+              addr = (addr & 0x3fff) | (bank_nr << 14);
+              rom_symbols[addr] = sym;
+            } else {
+              ram_symbols[addr] = sym;
+            }
+          } else if ((rm = section_re.exec(line))) {
+            var saddr = parseInt(rm[1], 16);
+            var eaddr = parseInt(rm[2], 16) + 1;
+            if (saddr < 0x8000) {
+              saddr = (saddr & 0x3fff) | (bank_nr << 14);
+              eaddr = (eaddr & 0x3fff) | (bank_nr << 14);
+              rom_symbols[saddr] = null;
+              rom_symbols[eaddr] = null;
+            } else {
+              ram_symbols[saddr] = null;
+              ram_symbols[eaddr] = null;
+            }
+          } else if ((rm = section_type_bank_re.exec(line))) {
+            section_type = rm[1];
+            bank_nr = parseInt(rm[2]);
+          } else if ((rm = slack_re.exec(line))) {
+            var space = parseInt(rm[1], 16);
+            var total = 0x4000;
+            if (section_type.startsWith('WRAM')) total = 0x1000;
+            else if (section_type.startsWith('HRAM')) total = 127;
+            infoLog(
+              'Space left: ' +
+                section_type +
+                '[' +
+                bank_nr +
+                ']: ' +
+                space +
+                '  (' +
+                ((space / total) * 100).toFixed(1) +
+                '%)',
+            );
+          }
+        }
+
+        // Merge errors into global list so textEditor can show them
+        for (var e of local_errors) error_list.push(e);
+
+        infoLog('Build done');
+        callback(final_rom, start_address, addr_to_line);
+      });
+    });
+  });
+}
+
 export function getErrors() {
   return error_list;
 }
