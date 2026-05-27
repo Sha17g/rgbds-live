@@ -1,46 +1,75 @@
-import * as storage from './storage.js';
-import * as textEditor from './text-editor.js';
-import * as gfxEditor from './gfx-editor.js';
+// ---------------------------------------------------------------------------
+// EditorManager 类 — 统一管理 TextEditor / GfxEditor 切换和文件类型判定
+// ---------------------------------------------------------------------------
 
-var nullEditor = {
-  hide: function () {
-    document.getElementById('nullEditorDiv').style.display = 'none';
-  },
-  show: function () {
-    document.getElementById('nullEditorDiv').style.display = '';
-  },
-  setCurrentFile: function () {},
-};
-var currentEditor = nullEditor;
-var currentFilename = '';
+export class EditorManager {
+  /**
+   * @param {object} opts
+   * @param {import('./text-editor.js').TextEditor} opts.textEditor
+   * @param {import('./gfx-editor.js').GfxEditor} opts.gfxEditor
+   * @param {import('./storage.js').Storage} opts.storage
+   */
+  constructor({ textEditor, gfxEditor, storage }) {
+    this.textEditor = textEditor;
+    this.gfxEditor = gfxEditor;
+    this.storage = storage;
 
-export function getCurrentFilename() {
-  return currentFilename;
-}
+    this.currentEditor = this._nullEditor();
+    this.currentFilename = '';
 
-export function setCurrentFile(filename) {
-  currentFilename = filename;
-  var prevEditor = currentEditor;
-  if (typeof storage.getFiles()[filename] == 'string') currentEditor = textEditor;
-  else currentEditor = gfxEditor;
-  if (prevEditor != currentEditor) {
-    prevEditor.hide();
-    currentEditor.show();
+    this.nullEditorDiv = document.getElementById('nullEditorDiv');
   }
-  return currentEditor.setCurrentFile(filename);
+
+  /** 空编辑器占位 */
+  _nullEditor() {
+    const self = this;
+    return {
+      hide() { if (self.nullEditorDiv) self.nullEditorDiv.style.display = 'none'; },
+      show() { if (self.nullEditorDiv) self.nullEditorDiv.style.display = ''; },
+      setCurrentFile() {},
+    };
+  }
+
+  // ---- API ----
+
+  getCurrentFilename() {
+    return this.currentFilename;
+  }
+
+  setCurrentFile(filename) {
+    this.currentFilename = filename;
+    const prevEditor = this.currentEditor;
+
+    if (typeof this.storage.getFiles()[filename] === 'string') {
+      this.currentEditor = this.textEditor;
+    } else {
+      this.currentEditor = this.gfxEditor;
+    }
+
+    if (prevEditor !== this.currentEditor) {
+      prevEditor.hide();
+      this.currentEditor.show();
+    }
+    return this.currentEditor.setCurrentFile(filename);
+  }
+
+  getFileType(filename) {
+    const idx = filename.lastIndexOf('.');
+    if (idx < 0) return 'binary';
+    const ext = filename.substr(idx + 1).toLowerCase();
+    if (['inc', 'asm', 'z80', 'h', 'c', 'cpp', 'hpp', 'txt'].includes(ext)) return 'text';
+    return 'binary';
+  }
 }
 
-export function getFileType(filename) {
-  var idx = filename.lastIndexOf('.');
-  if (idx < 0) return 'binary';
-  var ext = filename.substr(idx + 1).toLowerCase();
-  if (ext == 'inc') return 'text';
-  if (ext == 'asm') return 'text';
-  if (ext == 'z80') return 'text';
-  if (ext == 'h') return 'text';
-  if (ext == 'c') return 'text';
-  if (ext == 'cpp') return 'text';
-  if (ext == 'hpp') return 'text';
-  if (ext == 'txt') return 'text';
-  return 'binary';
-}
+// ---------------------------------------------------------------------------
+// 向后兼容：模块级导出（代理到默认单例）
+// ---------------------------------------------------------------------------
+
+let _defaultInstance = null;
+
+export function setDefaultInstance(inst) { _defaultInstance = inst; }
+export function getCurrentFilename()     { return _defaultInstance ? _defaultInstance.getCurrentFilename() : ''; }
+export function setCurrentFile(fn)       { if (_defaultInstance) _defaultInstance.setCurrentFile(fn); }
+export function getFileType(fn)          { return _defaultInstance ? _defaultInstance.getFileType(fn) : 'binary'; }
+export function getInstance()            { return _defaultInstance; }

@@ -313,20 +313,93 @@ canvas {
 .container {
   display: grid;
   grid-template-columns: 200px auto 520px;
-  grid-template-rows: 24px auto 20%;
+  grid-template-rows: max-content max-content auto 20%;
   grid-gap: 0;
   height: 100vh;
-  overflow: hidden;
 }
-.menubar {
+
+/* ── Tab 栏 ── */
+.tab-bar {
   grid-column: 1 / 4;
   grid-row: 1;
+  display: flex;
+  align-items: center;
+  background: var(--background);
+  border-bottom: 1px solid var(--border-color);
+  padding: 0;
+  min-height: 32px;
+  overflow: hidden;
+}
+.tab-list {
+  display: flex;
+  flex: 1;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.tab-item {
+  display: flex;
+  align-items: center;
+  padding: 4px 8px 4px 12px;
+  border-right: 1px solid var(--border-color);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--color);
+  background: var(--background);
+  min-width: 0;
+}
+.tab-item.active {
+  background: var(--selectedfile-background);
+  border-bottom: 2px solid #69f;
+}
+.tab-item:hover {
+  background: var(--background-alt);
+}
+.tab-item .tab-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+.tab-item .tab-close {
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 3px;
+  font-size: 14px;
+  line-height: 1;
+  color: #999;
+  cursor: pointer;
+}
+.tab-item .tab-close:hover {
+  color: var(--active-link);
+  background: rgba(128,128,128,0.2);
+}
+.tab-new-btn {
+  flex-shrink: 0;
+  margin: 2px 4px;
+  padding: 2px 10px;
+  font-size: 16px;
+  line-height: 1;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--background);
+  color: var(--color);
+  cursor: pointer;
+}
+.tab-new-btn:hover {
+  background: var(--selectedfile-background);
+}
+
+.menubar {
+  grid-column: 1 / 4;
+  grid-row: 2;
 }
 
 .editor {
   grid-column-start: 1;
   grid-column-end: 3;
-  grid-row: 2;
+  grid-row: 3;
+  overflow: hidden;
 }
 
 .filelist-open .editor {
@@ -335,18 +408,18 @@ canvas {
 
 .sidebar {
   grid-column: 1;
-  grid-row: 2;
+  grid-row: 3;
   overflow: auto;
 }
 
 .emulator {
   grid-column: 3;
-  grid-row: 2 / 4;
+  grid-row: 3 / 5;
   overflow: auto;
 }
 .console {
   grid-column: 1 / 3;
-  grid-row: 3;
+  grid-row: 4;
   overflow: hidden;
 }
 .output {
@@ -398,12 +471,12 @@ canvas {
 }
 
 @media only screen and (max-width: 600px) {
-  .container {
-    display: grid;
-    grid-template-columns: auto;
-    grid-template-rows: 24px 600px auto 100px 300px;
-    grid-gap: 0;
-  }
+.container {
+  display: grid;
+  grid-template-columns: 200px auto 400px;
+  grid-template-rows: max-content 400px 100px;
+  grid-gap: 0;
+}
   .menubar {
     grid-column: 1;
     grid-row: 1;

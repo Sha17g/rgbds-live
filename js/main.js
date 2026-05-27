@@ -1,154 +1,448 @@
-import * as compiler from './compiler.js';
-import * as emulator from './emulator.js';
-import * as storage from './storage.js';
-import * as editors from './editors.js';
-import * as textEditor from './text-editor.js';
-import * as gfxEditor from './gfx-editor.js';
+// ---------------------------------------------------------------------------
+// main.js — 应用入口 + Tab 管理器
+//
+// 架构：
+//   - 一组共享的 DOM 编辑器（Ace、GfxEditor），由首个 Panel 创建
+//   - 每个 Tab = 一个 Panel（独立 Storage/Compiler/Emulator）
+//   - 切换 Tab 时：保存旧 Panel 编辑器状态 → 交换编辑器引用 → 恢复新 Panel 状态
+// ---------------------------------------------------------------------------
 
-globalThis.emulator = emulator;
+import * as compilerMod from './compiler.js';
+import * as emulatorMod from './emulator.js';
+import * as storageMod from './storage.js';
+import * as editorsMod from './editors.js';
+import * as textEditorMod from './text-editor.js';
+import * as gfxEditorMod from './gfx-editor.js';
 
+import { Panel, panelManager } from './panel.js';
+
+// 为 DEV 模式保留调试入口
+globalThis.emulator = emulatorMod;
 if (import.meta.env.DEV) {
   globalThis._rgbdsDebug = {
-    compiler,
-    emulator,
-    storage,
-    editors,
-    textEditor,
-    gfxEditor,
+    compiler: compilerMod,
+    emulator: emulatorMod,
+    storage: storageMod,
+    editors: editorsMod,
+    textEditor: textEditorMod,
+    gfxEditor: gfxEditorMod,
   };
 }
 
-var cpu_line_marker = undefined;
-var start_address;
-var rom;
-var addr_to_line = {};
-var line_to_addr = {};
-var cpu_step_interval_id;
-var emu_view = '';
+// ═══════════════════════════════════════════════════════════════════════════
+// Tab 管理器
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** 共享编辑器实例（由首个 Panel 创建后提取） */
+let sharedEditors = null;
+
+/** @type {Panel[]} */
+const tabPanels = [];
+
+/** @type {number} 当前活动 Tab 索引 */
+let activeTabIndex = -1;
+
+/** 自增 Tab ID */
+let tabIdCounter = 1;
+
+function createPanelOpts() {
+  return {
+    containerId: 'container',
+    aceDivId: 'textEditorDiv',
+    gfxParentDivId: 'gfxEditorDiv',
+    gfxTilesCanvasId: 'gfxEditorTilesCanvas',
+    gfxDrawCanvasId: 'gfxEditorDrawCanvas',
+    gfxPaletteCanvasId: 'gfxEditorPalette',
+    emulatorCanvasId: 'emulator_screen_canvas',
+    fileListId: 'filelist',
+    outputLogId: 'output',
+    statusBarId: 'statusbar',
+    cpuDom: {
+      pc: document.getElementById('cpu_pc'),
+      sp: document.getElementById('cpu_sp'),
+      a: document.getElementById('cpu_a'),
+      bc: document.getElementById('cpu_bc'),
+      de: document.getElementById('cpu_de'),
+      hl: document.getElementById('cpu_hl'),
+      flags: document.getElementById('cpu_flags'),
+    },
+  };
+}
+
+function createNewPanel() {
+  const opts = createPanelOpts();
+
+  if (!sharedEditors) {
+    // 第一个 Tab：让 Panel 自己创建编辑器（_ownsEditors = true）
+    const panel = new Panel(opts);
+    sharedEditors = {
+      textEditor: panel.textEditor,
+      gfxEditor: panel.gfxEditor,
+      editorManager: panel.editorManager,
+    };
+    return panel;
+  }
+
+  // 后续 Tab：不创建编辑器，稍后 bindEditors
+  opts._sharedEditors = sharedEditors;
+  const panel = new Panel(opts);
+  panel.bindEditors(sharedEditors);
+  return panel;
+}
+
+/** 保存当前 Panel 的编辑器状态，切换到目标 Panel */
+function switchToTab(index, force = false) {
+  if (!force && (index === activeTabIndex || index < 0 || index >= tabPanels.length)) return;
+  if (index < 0 || index >= tabPanels.length) return;
+  if (activeTabIndex >= 0 && tabPanels[activeTabIndex]) {
+    tabPanels[activeTabIndex].saveEditorState();
+  }
+
+  // 停止当前模拟器
+  if (activeTabIndex >= 0 && tabPanels[activeTabIndex]) {
+    tabPanels[activeTabIndex].destroyEmulator();
+  }
+
+  activeTabIndex = index;
+  const newPanel = tabPanels[index];
+
+  // 绑定共享编辑器引用到新 Panel 的 Storage / Compiler
+  if (sharedEditors && !newPanel._ownsEditors) {
+    newPanel.bindEditors(sharedEditors);
+  }
+
+  // 恢复新 Panel 的编辑器状态
+  newPanel.restoreEditorState();
+
+  // 更新 UI
+  updateTabBar();
+  updateAllUI();
+  refreshCompilerLog(newPanel);
+
+  // 切换默认实例引用
+  setDefaultInstances(newPanel);
+
+  // 重新调起编译器日志回调（新 Panel 的 logCallback）
+  newPanel.compiler.setLogCallback((str, kind) => {
+    appendLog(str, kind);
+  });
+
+  // 重新调起模拟器串口回调
+  newPanel.emulator.setSerialCallback((value) => {
+    const formatted = toHex2(value);
+    document.getElementById('serial_log').innerText = '$' + formatted;
+  });
+
+  // 自动打开第一个文件并编译
+  const files = Object.keys(newPanel.storage.getFiles());
+  if (files.length > 0) {
+    const currentFile = newPanel._savedCurrentFile || files[0];
+    newPanel.editorManager.setCurrentFile(currentFile);
+  }
+
+  // 延迟编译
+  setTimeout(() => {
+    compileCurrentPanel();
+  }, 50);
+}
+
+function addNewTab() {
+  const name = prompt('New tab name (leave empty for auto):', '');
+  if (name === null) return -1; // 用户取消
+  const copyFromCurrent = getActivePanel()
+    ? confirm('Copy files from current tab?')
+    : false;
+  const panel = createNewPanel();
+  if (name && name.trim()) {
+    panel.customName = name.trim();
+  }
+  tabPanels.push(panel);
+  panelManager.addPanel(panel);
+
+  if (copyFromCurrent && getActivePanel()) {
+    // 复制当前 Tab 的所有文件
+    const srcFiles = getActivePanel().storage.getFiles();
+    for (const [filename, content] of Object.entries(srcFiles)) {
+      panel.storage.update(filename, content);
+    }
+  } else {
+    // 用 starting_project 初始化新 Tab
+    panel.storage.reset();
+    panel.storage.autoLoad();
+  }
+
+  const idx = tabPanels.length - 1;
+  switchToTab(idx);
+  return idx;
+}
+
+function closeTab(index) {
+  if (tabPanels.length <= 1) return; // 至少保留一个
+  const panel = tabPanels[index];
+  const wasActive = (index === activeTabIndex);
+
+  panel.destroyEmulator();
+  panel.destroy();
+
+  // 从 PanelManager 移除
+  panelManager.removePanel(panel);
+
+  tabPanels.splice(index, 1);
+
+  // 修正 activeTabIndex
+  if (activeTabIndex > index) {
+    activeTabIndex--;
+  } else if (activeTabIndex >= tabPanels.length) {
+    activeTabIndex = tabPanels.length - 1;
+  }
+
+  // 刷新标签栏
+  updateTabBar();
+
+  // 如果关闭的是活动 Tab，splice 后同位置已是不同 Panel，须强制切换
+  if (wasActive) {
+    switchToTab(activeTabIndex, true);
+  }
+}
+
+function getTabLabel(panel, index) {
+  if (panel.customName) return panel.customName;
+  const files = Object.keys(panel.storage.getFiles());
+  if (files.length > 0) return files[0].replace(/\.(asm|inc)$/, '');
+  return 'Tab ' + (index + 1);
+}
+
+function updateTabBar() {
+  const tabList = document.getElementById('tab-list');
+  if (!tabList) return;
+  tabList.innerHTML = '';
+
+  for (let i = 0; i < tabPanels.length; i++) {
+    const panel = tabPanels[i];
+    const div = document.createElement('div');
+    div.className = 'tab-item' + (i === activeTabIndex ? ' active' : '');
+
+    const name = document.createElement('span');
+    name.className = 'tab-name';
+    name.textContent = getTabLabel(panel, i);
+    const files = Object.keys(panel.storage.getFiles());
+    name.title = files.join(', ') || 'Double-click to rename';
+    // 双击编辑标签名
+    name.addEventListener('dblclick', (e) => {
+      e.stopPropagation();
+      const newName = prompt('Rename tab:', panel.customName || getTabLabel(panel, i));
+      if (newName !== null) {
+        panel.customName = newName.trim() || null;
+        updateTabBar();
+      }
+    });
+    div.appendChild(name);
+
+    const closeBtn = document.createElement('span');
+    closeBtn.className = 'tab-close';
+    closeBtn.textContent = '×';
+    closeBtn.title = 'Close tab';
+    closeBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      closeTab(i);
+    });
+    div.appendChild(closeBtn);
+
+    div.addEventListener('click', () => switchToTab(i));
+    tabList.appendChild(div);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 当前 Panel 便捷引用
+// ═══════════════════════════════════════════════════════════════════════════
+
+function getActivePanel() {
+  return tabPanels[activeTabIndex];
+}
+
+function setDefaultInstances(panel) {
+  compilerMod.setDefaultInstance(panel.compiler);
+  emulatorMod.setDefaultInstance(panel.emulator);
+  storageMod.setDefaultInstance(panel.storage);
+  editorsMod.setDefaultInstance(panel.editorManager);
+  textEditorMod.setDefaultInstance(panel.textEditor);
+  gfxEditorMod.setDefaultInstance(panel.gfxEditor);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 全局状态
+// ═══════════════════════════════════════════════════════════════════════════
+
+let emu_view = '';
+let rom = undefined;
+let serial_log_buffer = [];
+const serial_log_buffer_size = 256;
 
 export function isDarkMode() {
   return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
 function escapeHTML(str) {
-  var escapedHTML = document.createElement('div');
-  escapedHTML.innerText = str;
-  return escapedHTML.innerHTML;
+  const d = document.createElement('div');
+  d.innerText = str;
+  return d.innerHTML;
 }
 
-compiler.setLogCallback(function (str, kind) {
-  var output = document.getElementById('output');
+// ═══════════════════════════════════════════════════════════════════════════
+// 编译器日志输出
+// ═══════════════════════════════════════════════════════════════════════════
+
+function appendLog(str, kind) {
+  const output = document.getElementById('output');
   if (str == null && kind == null) {
     output.innerHTML = '';
     return;
   }
   output.innerHTML += '<span class="' + kind + '">' + escapeHTML(str) + '</span>\n';
   output.scrollTop = output.scrollHeight;
-});
+}
 
-const serial_log_buffer = [];
-const serial_log_buffer_size = 256;
-emulator.setSerialCallback(function (value) {
-  var formatted_value = toHex2(value);
-  document.getElementById('serial_log').innerText = '$' + formatted_value;
-  serial_log_buffer.unshift(formatted_value);
-  if (serial_log_buffer.length > serial_log_buffer_size) {
-    serial_log_buffer.length = serial_log_buffer_size;
-  }
-});
+function refreshCompilerLog(panel) {
+  // 清空并重新绑定日志（在 switchToTab 中处理）
+}
 
-export function compileCode() {
-  compiler.compile(function (_rom_file, _start_address, _addr_to_line) {
-    textEditor.updateErrors();
+// ═══════════════════════════════════════════════════════════════════════════
+// 编译入口 — 编译当前活动 Panel
+// ═══════════════════════════════════════════════════════════════════════════
+
+export function compileCurrentPanel() {
+  const panel = getActivePanel();
+  if (!panel) return;
+  const compiler = panel.compiler;
+  const textEditor = panel.textEditor;
+
+  compiler.setLogCallback((str, kind) => {
+    appendLog(str, kind);
+  });
+
+  compiler.compile((_rom_file, _start_address, _addr_to_line) => {
+    if (textEditor) textEditor.updateErrors();
     updateFileList();
 
-    var pc_line;
     destroyEmulator();
-    if (typeof _rom_file == 'undefined') {
-      return;
-    }
-
     rom = _rom_file;
-    start_address = _start_address;
-    addr_to_line = _addr_to_line;
-    for (var addr in addr_to_line) {
-      var [filename, line] = addr_to_line[addr];
-      if (typeof line_to_addr[filename] == 'undefined') line_to_addr[filename] = {};
-      if (typeof line_to_addr[filename][line] == 'undefined') line_to_addr[filename][line] = [];
+
+    if (typeof _rom_file === 'undefined') return;
+
+    panel.startAddress = _start_address;
+    panel.addrToLine = _addr_to_line;
+    panel._bootEmulator(rom, _start_address);
+    updateBreakpoints();
+
+    // 构建 line_to_addr 反查表
+    const line_to_addr = {};
+    for (const addrStr in _addr_to_line) {
+      const addr = parseInt(addrStr);
+      const [filename, line] = _addr_to_line[addrStr];
+      if (!line_to_addr[filename]) line_to_addr[filename] = {};
+      if (!line_to_addr[filename][line]) line_to_addr[filename][line] = [];
       line_to_addr[filename][line].push(addr);
     }
+    window._line_to_addr = line_to_addr;
+
     updateTextView();
   });
 }
 
+// 向后兼容
+export function compileCode() {
+  compileCurrentPanel();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 模拟器管理
+// ═══════════════════════════════════════════════════════════════════════════
+
 function destroyEmulator() {
-  emulator.destroy();
-
-  addr_to_line = {};
-  line_to_addr = {};
+  const panel = getActivePanel();
+  if (panel) panel.destroyEmulator();
   rom = undefined;
-
-  textEditor.setCpuLine(null, null);
+  window._line_to_addr = {};
+  if (sharedEditors && sharedEditors.textEditor) {
+    sharedEditors.textEditor.setCpuLine(null, null);
+  }
 }
 
 function initEmulator(jump_to_pc) {
-  if (typeof rom == 'undefined') return;
-
-  emulator.init(document.getElementById('emulator_screen_canvas'), rom);
-  emulator.setPC(start_address);
+  const panel = getActivePanel();
+  if (typeof rom === 'undefined' || !panel) return;
+  panel._bootEmulator(rom, panel.startAddress);
   updateCpuState(jump_to_pc);
   updateBreakpoints();
 }
 
 function stepEmulator(step_type) {
-  if (!emulator.isAvailable()) {
-    initEmulator(step_type == 'single' || step_type == 'frame');
+  const panel = getActivePanel();
+  const emulator = panel ? panel.emulator : null;
+  if (!emulator || !emulator.isAvailable()) {
+    initEmulator(step_type === 'single' || step_type === 'frame');
     return false;
   }
-  var result = emulator.step(step_type);
-  updateCpuState(step_type == 'single' || step_type == 'frame');
+  const result = emulator.step(step_type);
+  updateCpuState(step_type === 'single' || step_type === 'frame');
   return result;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 断点
+// ═══════════════════════════════════════════════════════════════════════════
+
 export function updateBreakpoints() {
+  const panel = getActivePanel();
+  const emulator = panel ? panel.emulator : null;
+  const textEditor = sharedEditors ? sharedEditors.textEditor : null;
+  if (!emulator || !textEditor) return;
+
   emulator.clearBreakpoints();
-  var breakpoints = textEditor.getBreakpoints();
-  for (var data of breakpoints) {
-    var [filename, line_nr, valid] = data;
+  const breakpoints = textEditor.getBreakpoints();
+  const line_to_addr = window._line_to_addr || {};
+  for (const data of breakpoints) {
+    const [filename, line_nr] = data;
     data[2] = false;
-    if (typeof line_to_addr[filename] == 'undefined' || typeof line_to_addr[filename][line_nr] == 'undefined') continue;
+    if (!line_to_addr[filename] || !line_to_addr[filename][line_nr]) continue;
     data[2] = true;
-    for (var addr of line_to_addr[filename][line_nr]) emulator.setBreakpoint(addr);
+    for (const addr of line_to_addr[filename][line_nr]) emulator.setBreakpoint(addr);
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 键盘输入
+// ═══════════════════════════════════════════════════════════════════════════
+
 function handleGBKey(code, down) {
-  //Map the directional keys and A/S to B/A and shift/enter to select/start
-  if (code == 'ArrowRight') emulator.setKeyPad('right', down);
-  if (code == 'ArrowLeft') emulator.setKeyPad('left', down);
-  if (code == 'ArrowUp') emulator.setKeyPad('up', down);
-  if (code == 'ArrowDown') emulator.setKeyPad('down', down);
-  if (code == 'KeyS') emulator.setKeyPad('a', down);
-  if (code == 'KeyA') emulator.setKeyPad('b', down);
-  if (code == 'ShiftRight') emulator.setKeyPad('select', down);
-  if (code == 'Enter') emulator.setKeyPad('start', down);
-  if (code == 'Escape') {
+  const panel = getActivePanel();
+  if (panel) {
+    if (down) panel.handleKeyDown(code);
+    else panel.handleKeyUp(code);
+  }
+  if (code === 'Escape') {
     document.getElementById('cpu_run_check').checked = false;
     document.getElementById('cpu_run_check').onclick();
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 十六进制工具
+// ═══════════════════════════════════════════════════════════════════════════
 
 const hexTable = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
 const toHex2 = (num) => hexTable[num & 0xff];
 const toHex4 = (num) => hexTable[(num >> 8) & 0xff] + hexTable[num & 0xff];
 
 function toHex(num, digits) {
-  if (digits === 2) {
-    return '$' + toHex2(num);
-  } else {
-    return '$' + toHex4(num);
-  }
+  if (digits === 2) return '$' + toHex2(num);
+  return '$' + toHex4(num);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CPU 状态更新
+// ═══════════════════════════════════════════════════════════════════════════
 
 const cpuDom = {
   pc: document.getElementById('cpu_pc'),
@@ -161,9 +455,13 @@ const cpuDom = {
 };
 
 function updateCpuState(afterSingleStep) {
+  const panel = getActivePanel();
+  const emulator = panel ? panel.emulator : null;
+  if (!emulator || !emulator.isAvailable()) return;
+
   emulator.renderScreen();
 
-  var pc = emulator.getPC();
+  const pc = emulator.getPC();
   cpuDom.pc.innerText = toHex(pc, 4);
   cpuDom.sp.innerText = toHex(emulator.getSP(), 4);
   cpuDom.a.innerText = toHex(emulator.getA(), 2);
@@ -172,110 +470,102 @@ function updateCpuState(afterSingleStep) {
   cpuDom.hl.innerText = toHex(emulator.getHL(), 4);
   cpuDom.flags.innerText = emulator.getFlags();
 
-  var file_line_nr = addr_to_line[pc];
-  if (typeof file_line_nr == 'undefined') file_line_nr = addr_to_line[pc - 1];
-  if (typeof file_line_nr != 'undefined') textEditor.setCpuLine(file_line_nr[0], file_line_nr[1], afterSingleStep);
-  else textEditor.setCpuLine(null, null);
+  const addr_to_line = panel.addrToLine || {};
+  let file_line_nr = addr_to_line[pc];
+  if (!file_line_nr) file_line_nr = addr_to_line[pc - 1];
+  const te = sharedEditors ? sharedEditors.textEditor : null;
+  if (te) {
+    if (file_line_nr) te.setCpuLine(file_line_nr[0], file_line_nr[1], afterSingleStep);
+    else te.setCpuLine(null, null);
+  }
+
   updateVRamCanvas();
   updateTextView();
 }
 
 function updateVRamCanvas() {
-  var canvas = document.getElementById('emulator_vram_canvas');
-  if (canvas.style.display != '') return;
+  const canvas = document.getElementById('emulator_vram_canvas');
+  if (!canvas || canvas.style.display === 'none') return;
 
-  if (emu_view == 'vram') emulator.renderVRam(canvas);
-  if (emu_view == 'bg0') emulator.renderBackground(canvas, 0);
-  if (emu_view == 'bg1') emulator.renderBackground(canvas, 1);
+  const panel = getActivePanel();
+  const emulator = panel ? panel.emulator : null;
+  if (!emulator) return;
+
+  if (emu_view === 'vram') emulator.renderVRam(canvas);
+  if (emu_view === 'bg0')  emulator.renderBackground(canvas, 0);
+  if (emu_view === 'bg1')  emulator.renderBackground(canvas, 1);
 }
 
 function updateTextView() {
-  var display_text = document.getElementById('emulator_display_text');
-  if (display_text.style.display != '') return;
-  var data = rom;
-  var bank_size = 0x4000;
-  var offset = 0x0000;
-  var symbols = compiler.getRomSymbols();
-  if (emu_view == 'wram') {
+  const display_text = document.getElementById('emulator_display_text');
+  if (!display_text || display_text.style.display === 'none') return;
+
+  const panel = getActivePanel();
+  const emulator = panel ? panel.emulator : null;
+  const compiler = panel ? panel.compiler : null;
+  if (!emulator) return;
+
+  let data = rom;
+  let bank_size = 0x4000;
+  let offset = 0x0000;
+  let symbols = compiler ? compiler.getRomSymbols() : [];
+
+  if (emu_view === 'wram') {
     data = emulator.getWRam();
     bank_size = 0x1000;
     offset = 0xc000;
-    symbols = compiler.getRamSymbols();
+    symbols = compiler ? compiler.getRamSymbols() : [];
   }
-  if (emu_view == 'hram') {
+  if (emu_view === 'hram') {
     data = emulator.getHRam();
     bank_size = 0x1000;
     offset = 0xff80;
-    symbols = compiler.getRamSymbols();
+    symbols = compiler ? compiler.getRamSymbols() : [];
   }
-  if (emu_view == 'io') {
-    var text = '';
-    var registers = [
-      { name: 'P1', value: 0xff00 },
-      { name: 'SB', value: 0xff01 },
-      { name: 'SC', value: 0xff02 },
-      { name: 'DIV', value: 0xff04 },
-      { name: 'TIMA', value: 0xff05 },
-      { name: 'TMA', value: 0xff06 },
-      { name: 'TAC', value: 0xff07 },
-      { name: 'IF', value: 0xff0f },
-      { name: 'LCDC', value: 0xff40 },
-      { name: 'STAT', value: 0xff41 },
-      { name: 'SCY', value: 0xff42 },
-      { name: 'SCX', value: 0xff43 },
-      { name: 'LY', value: 0xff44 },
-      { name: 'LYC', value: 0xff45 },
-      { name: 'DMA', value: 0xff46 },
-      { name: 'BGP', value: 0xff47 },
-      { name: 'OBP0', value: 0xff48 },
-      { name: 'OBP1', value: 0xff49 },
-      { name: 'WY', value: 0xff4a },
-      { name: 'WX', value: 0xff4b },
-      { name: 'KEY1', value: 0xff4d },
-      { name: 'VBK', value: 0xff4f },
-      { name: 'RP', value: 0xff56 },
-      { name: 'BCPS', value: 0xff68 },
-      { name: 'BCPD', value: 0xff69 },
-      { name: 'OCPS', value: 0xff6a },
-      { name: 'OCPD', value: 0xff6b },
-      { name: 'SVBK', value: 0xff70 },
-      { name: 'IE', value: 0xffff },
+  if (emu_view === 'io') {
+    let text = '';
+    const registers = [
+      'P1 0xff00', 'SB 0xff01', 'SC 0xff02', 'DIV 0xff04', 'TIMA 0xff05',
+      'TMA 0xff06', 'TAC 0xff07', 'IF 0xff0f', 'LCDC 0xff40', 'STAT 0xff41',
+      'SCY 0xff42', 'SCX 0xff43', 'LY 0xff44', 'LYC 0xff45', 'DMA 0xff46',
+      'BGP 0xff47', 'OBP0 0xff48', 'OBP1 0xff49', 'WY 0xff4a', 'WX 0xff4b',
+      'KEY1 0xff4d', 'VBK 0xff4f', 'RP 0xff56', 'BCPS 0xff68', 'BCPD 0xff69',
+      'OCPS 0xff6a', 'OCPD 0xff6b', 'SVBK 0xff70', 'IE 0xffff',
     ];
-    for (var reg_info of registers) {
-      text +=
-        "<span style='float: left; width: 50px'>" +
-        reg_info.name +
-        ':</span>' +
-        toHex2(emulator.readMem(reg_info.value)) +
-        '<br/>';
+    for (const regDef of registers) {
+      const [name, addrStr] = regDef.split(' ');
+      const addr = parseInt(addrStr);
+      text += '<span style="float: left; width: 50px">' + name + ':</span>' +
+        toHex2(emulator.readMem(addr)) + '<br/>';
     }
     display_text.innerHTML = text;
     return;
   }
-  if (emu_view == 'serial') {
-    var text = '';
-    for (var n = 0; n < serial_log_buffer.length; n += 16) {
+  if (emu_view === 'serial') {
+    let text = '';
+    for (let n = 0; n < serial_log_buffer.length; n += 16) {
       text += serial_log_buffer.slice(n, n + 16).join(' ') + '\n';
     }
     display_text.textContent = text;
     return;
   }
-  if (typeof data == 'undefined') return;
+  if (typeof data === 'undefined') return;
 
-  var text =
-    "<div class='emulator_display_header'>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp; 1&nbsp; 2&nbsp; 3&nbsp; 4&nbsp; 5&nbsp; 6&nbsp; 7&nbsp; 8&nbsp; 9&nbsp; a&nbsp; b&nbsp; c&nbsp; d&nbsp; e&nbsp; f</div>";
-  var symbol = null;
-  var span = false;
-  var span_color = 0;
-  for (var n = 0; n < data.length; n += 16) {
-    var hex = Array.prototype.map.call(data.slice(n, n + 16), (x) => toHex2(x));
-    var bank = ~~(n / bank_size);
-    var addr = n & (bank_size - 1);
+  let text = '<div class="emulator_display_header">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 0&nbsp; 1&nbsp; 2&nbsp; 3&nbsp; 4&nbsp; 5&nbsp; 6&nbsp; 7&nbsp; 8&nbsp; 9&nbsp; a&nbsp; b&nbsp; c&nbsp; d&nbsp; e&nbsp; f</div>';
+  let symbol = null;
+  let span = false;
+  let span_color = 0;
+
+  for (let n = 0; n < data.length; n += 16) {
+    const hex = Array.prototype.map.call(data.slice(n, n + 16), (x) => toHex2(x));
+    const bank = ~~(n / bank_size);
+    let addr = n & (bank_size - 1);
     if (bank > 0) addr += bank_size;
     text += toHex2(bank) + ':' + toHex4(addr + offset);
-    for (var idx = 0; idx < hex.length; idx++) {
+
+    for (let idx = 0; idx < hex.length; idx++) {
       text += ' ';
-      var new_symbol = symbols[n + idx + offset];
+      const new_symbol = symbols[n + idx + offset];
       if (new_symbol) {
         symbol = new_symbol;
         if (span) text += '</span>';
@@ -287,12 +577,8 @@ function updateTextView() {
         span = false;
       }
       if (symbol && !span) {
-        text +=
-          "<span title='" +
-          symbol +
-          "' style='background-color: hsl(" +
-          span_color +
-          (isDarkMode() ? ", 30%, 30%)'>" : ", 50%, 50%)'>");
+        text += '<span title="' + symbol + '" style="background-color: hsl(' + span_color +
+          (isDarkMode() ? ', 30%, 30%)">' : ', 50%, 50%)">');
         span = true;
       }
       text += hex[idx];
@@ -304,223 +590,261 @@ function updateTextView() {
   display_text.innerHTML = text;
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// 文件列表
+// ═══════════════════════════════════════════════════════════════════════════
+
 export function updateFileList() {
-  var filelist = document.getElementById('filelist');
+  const panel = getActivePanel();
+  if (!panel) return;
+  const filelist = document.getElementById('filelist');
+  if (!filelist) return;
   filelist.textContent = '';
 
+  const storage = panel.storage;
+  const editors = panel.editorManager;
+  const compiler = panel.compiler;
+
   for (const name of Object.keys(storage.getFiles()).sort()) {
-    var entry = document.createElement('li');
+    const entry = document.createElement('li');
     entry.textContent = name;
     filelist.appendChild(entry);
 
-    if (name == editors.getCurrentFilename()) entry.classList.add('active');
-    for (var [type, filename, line_nr, message] of compiler.getErrors()) {
-      if (filename != name) continue;
-      entry.classList.add(type);
-      if (type == 'error') {
-        entry.classList.remove('warning');
-        break;
+    if (name === editors.getCurrentFilename()) entry.classList.add('active');
+    if (compiler) {
+      for (const [type, filename] of compiler.getErrors()) {
+        if (filename !== name) continue;
+        entry.classList.add(type);
+        if (type === 'error') {
+          entry.classList.remove('warning');
+          break;
+        }
       }
     }
   }
 }
 
+function updateAllUI() {
+  updateFileList();
+  updateCpuState();
+}
+
 function deleteFile(name) {
+  const panel = getActivePanel();
+  if (!panel) return;
+  const storage = panel.storage;
+  const editors = panel.editorManager;
   if (Object.keys(storage.getFiles()).length < 2) return;
   storage.update(name, null);
-  if (editors.getCurrentFilename() == name) editors.setCurrentFile(Object.keys(storage.getFiles()).sort()[0]);
+  if (editors.getCurrentFilename() === name) {
+    editors.setCurrentFile(Object.keys(storage.getFiles()).sort()[0]);
+  }
   updateFileList();
 }
 
 function showTabType(type) {
   const tabTypes = ['emulator_screen_canvas', 'emulator_vram_canvas', 'emulator_display_text'];
   tabTypes.forEach((tabType) => {
-    document.getElementById(tabType).style.display = type == tabType ? '' : 'none';
+    document.getElementById(tabType).style.display = type === tabType ? '' : 'none';
   });
 }
 
-export function init(event) {
-  textEditor.register('textEditorDiv', compileCode);
-  gfxEditor.register('gfxEditorDiv');
+// ═══════════════════════════════════════════════════════════════════════════
+// 初始化
+// ═══════════════════════════════════════════════════════════════════════════
 
-  var urlParams = new URLSearchParams(window.location.search);
-  const asmOptions = (urlParams.get('asm') ?? '').trim();
-  if (asmOptions != '') {
-    document.getElementById('compiler_settings_asm').value = asmOptions;
-    compiler.setAsmOptions(asmOptions.split(' '));
-  }
-  const linkOptions = (urlParams.get('link') ?? '').trim();
-  if (linkOptions != '') {
-    document.getElementById('compiler_settings_link').value = linkOptions;
-    compiler.setLinkOptions(linkOptions.split(' '));
-  }
-  const fixOptions = (urlParams.get('fix') ?? '').trim();
-  if (fixOptions != '') {
-    document.getElementById('compiler_settings_fix').value = fixOptions;
-    compiler.setFixOptions(fixOptions.split(' '));
+export function init() {
+  // ── 创建默认 Tab（索引 0） ──
+  const defaultPanel = createNewPanel();
+  tabPanels.push(defaultPanel);
+  panelManager.addPanel(defaultPanel);
+  activeTabIndex = 0;
+
+  // 绑定共享编辑器引用到本文档范围
+  if (!sharedEditors && defaultPanel.textEditor) {
+    sharedEditors = {
+      textEditor: defaultPanel.textEditor,
+      gfxEditor: defaultPanel.gfxEditor,
+      editorManager: defaultPanel.editorManager,
+    };
   }
 
+  // 设置默认实例
+  setDefaultInstances(defaultPanel);
+
+  // 给模块级代理绑定
+  textEditorMod.setDefaultInstance(defaultPanel.textEditor);
+  gfxEditorMod.setDefaultInstance(defaultPanel.gfxEditor);
+
+  // ── Tab 栏事件 ──
+  document.getElementById('tab-new-btn').addEventListener('click', addNewTab);
+  updateTabBar();
+
+  // ── Storage UI 更新回调（已由 Panel 内部处理） ──
+  const storage = defaultPanel.storage;
+  const editors = defaultPanel.editorManager;
+
+  storage.setOnUIUpdate(() => {
+    editors.setCurrentFile(Object.keys(storage.getFiles()).sort()[0]);
+  });
+
+  // URL 参数：编译器选项
+  const urlParams = new URLSearchParams(window.location.search);
+  applyCompilerOptions(urlParams);
+
+  // 自动加载工程
   storage.autoLoad();
   editors.setCurrentFile(Object.keys(storage.getFiles()).pop());
   updateFileList();
 
+  // ── 文件列表点击 ──
   document.getElementById('filelist').onclick = function (e) {
-    if (!e.target.childNodes[0].wholeText) return;
-    editors.setCurrentFile(e.target.childNodes[0].wholeText);
-
+    const text = e.target.childNodes[0] && e.target.childNodes[0].wholeText;
+    if (!text) return;
+    const panel = getActivePanel();
+    if (panel && panel.editorManager) {
+      panel.editorManager.setCurrentFile(text);
+    }
     updateFileList();
     updateCpuState();
   };
+
+  // ── 侧栏汉堡按钮 ──
   document.getElementById('hamburger-container').onclick = function () {
     document.querySelector('body .container:first-child').classList.toggle('filelist-open');
   };
+
+  // ── 新文件对话框 ──
   document.getElementById('newfile').onclick = function () {
     document.getElementById('newfiledialog').style.display = 'block';
   };
   document.getElementById('newfiledialog').onclick = function (e) {
-    if (e.target == document.getElementById('newfiledialog'))
+    if (e.target === document.getElementById('newfiledialog'))
       document.getElementById('newfiledialog').style.display = 'none';
   };
   document.getElementById('newfiledialogclose').onclick = function () {
     document.getElementById('newfiledialog').style.display = 'none';
   };
   document.getElementById('newfile_empty_create').onclick = function () {
-    var result = document.getElementById('newfile_name').value;
+    const panel = getActivePanel();
+    if (!panel) return;
+    let result = document.getElementById('newfile_name').value;
     if (!result) return;
     if (result.indexOf('.') < 0) result += '.asm';
-    if (result in storage.getFiles()) return;
-    if (editors.getFileType(result) === 'text') storage.update(result, '');
-    else storage.update(result, new Uint8Array(16));
-    editors.setCurrentFile(result);
+    if (result in panel.storage.getFiles()) return;
+    if (panel.editorManager.getFileType(result) === 'text') panel.storage.update(result, '');
+    else panel.storage.update(result, new Uint8Array(16));
+    panel.editorManager.setCurrentFile(result);
     updateFileList();
     document.getElementById('newfiledialog').style.display = 'none';
   };
   document.getElementById('newfile_upload').onchange = function (e) {
-    var files = e.target.files;
+    const panel = getActivePanel();
+    if (!panel) return;
+    const files = e.target.files;
     if (files.length === 0) return;
-    var loadPromises = [];
-    for (var i = 0; i < files.length; i++) {
+    const loadPromises = [];
+    for (let i = 0; i < files.length; i++) {
       (function (file) {
-        var p = editors.getFileType(file.name) == 'text' ? file.text() : file.arrayBuffer();
+        const p = panel.editorManager.getFileType(file.name) === 'text' ? file.text() : file.arrayBuffer();
         loadPromises.push(p.then(function (data) {
-          storage.update(file.name, data);
+          panel.storage.update(file.name, data);
         }));
       })(files[i]);
     }
     Promise.all(loadPromises).then(function () {
-      editors.setCurrentFile(files[files.length - 1].name);
+      panel.editorManager.setCurrentFile(files[files.length - 1].name);
       updateFileList();
     });
     e.target.value = '';
     document.getElementById('newfiledialog').style.display = 'none';
   };
 
+  // ── 删除文件 ──
   document.getElementById('delfile').onclick = function () {
-    if (confirm('Are you sure you want to delete: ' + editors.getCurrentFilename() + '?'))
-      deleteFile(editors.getCurrentFilename());
+    const panel = getActivePanel();
+    if (!panel) return;
+    if (confirm('Are you sure you want to delete: ' + panel.editorManager.getCurrentFilename() + '?')) {
+      deleteFile(panel.editorManager.getCurrentFilename());
+    }
   };
+
+  // ── 新工程 ──
   document.getElementById('newproject').onclick = function () {
+    const panel = getActivePanel();
+    if (!panel) return;
     if (!confirm('Are you sure to clear the current project?')) return;
-    storage.reset();
-    editors.setCurrentFile('main.asm');
+    panel.storage.reset();
+    panel.editorManager.setCurrentFile('main.asm');
     updateFileList();
   };
 
+  // ── 编译器日志 ──
+  defaultPanel.compiler.setLogCallback((str, kind) => {
+    appendLog(str, kind);
+  });
+
+  // ── 模拟器串口 ──
+  defaultPanel.emulator.setSerialCallback((value) => {
+    const formatted = toHex2(value);
+    document.getElementById('serial_log').innerText = '$' + formatted;
+    serial_log_buffer.unshift(formatted);
+    if (serial_log_buffer.length > serial_log_buffer_size) {
+      serial_log_buffer.length = serial_log_buffer_size;
+    }
+  });
+
   compileCode();
 
-  document.getElementById('cpu_single_step').onclick = function () {
-    stepEmulator('single');
-  };
-  document.getElementById('cpu_frame_step').onclick = function () {
-    stepEmulator('frame');
-  };
-  document.getElementById('cpu_reset').onclick = function () {
-    initEmulator(true);
-  };
-  document.getElementById('cpu_run_check').onclick = function () {
+  // ── 模拟器控制按钮 ──
+  document.getElementById('cpu_single_step').onclick = () => stepEmulator('single');
+  document.getElementById('cpu_frame_step').onclick  = () => stepEmulator('frame');
+  document.getElementById('cpu_reset').onclick       = () => initEmulator(true);
+  document.getElementById('cpu_run_check').onclick   = function () {
     if (document.getElementById('cpu_run_check').checked) {
-      function runFunction() {
+      requestAnimationFrame(function runFn() {
         if (!document.hidden) {
           if (stepEmulator('run')) document.getElementById('cpu_run_check').checked = false;
         }
-        if (document.getElementById('cpu_run_check').checked) requestAnimationFrame(runFunction);
-      }
-      requestAnimationFrame(runFunction);
+        if (document.getElementById('cpu_run_check').checked) requestAnimationFrame(runFn);
+      });
     }
   };
-  var keyboardInput = document.getElementById('emulator_screen_container');
-  keyboardInput.tabIndex = -1;
-  keyboardInput.onkeydown = function (e) {
-    handleGBKey(e.code, true);
-    e.preventDefault();
-  };
-  keyboardInput.onkeyup = function (e) {
-    handleGBKey(e.code, false);
-    e.preventDefault();
-  };
+
+  // ── 键盘 ──
+  const kbInput = document.getElementById('emulator_screen_container');
+  kbInput.tabIndex = -1;
+  kbInput.onkeydown = function (e) { handleGBKey(e.code, true);  e.preventDefault(); };
+  kbInput.onkeyup   = function (e) { handleGBKey(e.code, false); e.preventDefault(); };
+
   document.onkeydown = function (e) {
-    if (e.code == 'F8') {
-      stepEmulator('single');
-      e.preventDefault();
-    }
-    if (e.code == 'F9') {
-      stepEmulator('frame');
+    if (e.code === 'F8') { stepEmulator('single'); e.preventDefault(); }
+    if (e.code === 'F9') { stepEmulator('frame'); e.preventDefault(); }
+    if (e.ctrlKey && e.code === 'KeyT') { addNewTab(); e.preventDefault(); }
+    if (e.ctrlKey && e.code === 'KeyW') {
+      if (tabPanels.length > 1) closeTab(activeTabIndex);
       e.preventDefault();
     }
   };
 
-  document.getElementById('emulator_display_screen').onclick = function () {
-    showTabType('emulator_screen_canvas');
-    emu_view = 'display';
-  };
-  document.getElementById('emulator_display_vram').onclick = function () {
-    showTabType('emulator_vram_canvas');
-    emu_view = 'vram';
-    updateVRamCanvas();
-  };
-  document.getElementById('emulator_display_bg0').onclick = function () {
-    showTabType('emulator_vram_canvas');
-    emu_view = 'bg0';
-    updateVRamCanvas();
-  };
-  document.getElementById('emulator_display_bg1').onclick = function () {
-    showTabType('emulator_vram_canvas');
-    emu_view = 'bg1';
-    updateVRamCanvas();
-  };
-  document.getElementById('emulator_display_rom').onclick = function () {
-    showTabType('emulator_display_text');
-    emu_view = 'rom';
-    updateTextView();
-  };
-  document.getElementById('emulator_display_wram').onclick = function () {
-    showTabType('emulator_display_text');
-    emu_view = 'wram';
-    updateTextView();
-  };
-  document.getElementById('emulator_display_hram').onclick = function () {
-    showTabType('emulator_display_text');
-    emu_view = 'hram';
-    updateTextView();
-  };
-  document.getElementById('emulator_display_io').onclick = function () {
-    showTabType('emulator_display_text');
-    emu_view = 'io';
-    updateTextView();
-  };
-  document.getElementById('emulator_display_serial').onclick = function () {
-    showTabType('emulator_display_text');
-    emu_view = 'serial';
-    updateTextView();
-  };
+  // ── 模拟器视图 Tab ──
+  document.getElementById('emulator_display_screen').onclick = () => { showTabType('emulator_screen_canvas'); emu_view = 'display'; };
+  document.getElementById('emulator_display_vram').onclick   = () => { showTabType('emulator_vram_canvas'); emu_view = 'vram'; updateVRamCanvas(); };
+  document.getElementById('emulator_display_bg0').onclick    = () => { showTabType('emulator_vram_canvas'); emu_view = 'bg0'; updateVRamCanvas(); };
+  document.getElementById('emulator_display_bg1').onclick    = () => { showTabType('emulator_vram_canvas'); emu_view = 'bg1'; updateVRamCanvas(); };
+  document.getElementById('emulator_display_rom').onclick    = () => { showTabType('emulator_display_text'); emu_view = 'rom'; updateTextView(); };
+  document.getElementById('emulator_display_wram').onclick   = () => { showTabType('emulator_display_text'); emu_view = 'wram'; updateTextView(); };
+  document.getElementById('emulator_display_hram').onclick   = () => { showTabType('emulator_display_text'); emu_view = 'hram'; updateTextView(); };
+  document.getElementById('emulator_display_io').onclick     = () => { showTabType('emulator_display_text'); emu_view = 'io'; updateTextView(); };
+  document.getElementById('emulator_display_serial').onclick = () => { showTabType('emulator_display_text'); emu_view = 'serial'; updateTextView(); };
 
+  // ── 下载 ROM ──
   document.getElementById('download_rom').onclick = function () {
-    if (typeof rom == 'undefined') return;
-    var element = document.createElement('a');
-    var url = window.URL.createObjectURL(new Blob([rom.buffer], { type: 'application/octet-stream' }));
+    if (typeof rom === 'undefined') return;
+    const element = document.createElement('a');
+    const url = window.URL.createObjectURL(new Blob([rom.buffer], { type: 'application/octet-stream' }));
     element.setAttribute('href', url);
     element.setAttribute('download', 'rom.gb');
-
     element.style.display = 'none';
     document.body.appendChild(element);
     element.click();
@@ -528,126 +852,131 @@ export function init(event) {
     window.URL.revokeObjectURL(url);
   };
 
-  document.getElementById('importmenu').onclick = function () {
-    document.getElementById('importdialog').style.display = 'block';
-  };
+  // ── 导入对话框 ──
+  document.getElementById('importmenu').onclick = () => { document.getElementById('importdialog').style.display = 'block'; };
   document.getElementById('importdialog').onclick = function (e) {
-    if (e.target == document.getElementById('importdialog'))
-      document.getElementById('importdialog').style.display = 'none';
+    if (e.target === document.getElementById('importdialog')) document.getElementById('importdialog').style.display = 'none';
   };
-  document.getElementById('importdialogclose').onclick = function () {
-    document.getElementById('importdialog').style.display = 'none';
-  };
-  document.getElementById('import_gist').onclick = function () {
-    storage.loadGithubGist(document.getElementById('import_gist_url').value);
+  document.getElementById('importdialogclose').onclick = () => { document.getElementById('importdialog').style.display = 'none'; };
+  document.getElementById('import_gist').onclick = () => {
+    const panel = getActivePanel();
+    if (panel) panel.storage.loadGithubGist(document.getElementById('import_gist_url').value);
     document.getElementById('importdialog').style.display = 'none';
   };
   document.getElementById('import_zipfile').onchange = function (e) {
     if (e.target.files.length > 0) {
-      storage.loadZip(e.target.files[0]);
+      const panel = getActivePanel();
+      if (panel) panel.storage.loadZip(e.target.files[0]);
       e.target.value = '';
       document.getElementById('importdialog').style.display = 'none';
     }
   };
-  document.getElementById('exportmenu').onclick = function () {
-    //storage.save();
-    document.getElementById('exportdialog').style.display = 'block';
 
-    document.getElementById('export_hash_url').value = storage.getHashUrl();
+  // ── 导出对话框 ──
+  document.getElementById('exportmenu').onclick = () => {
+    const panel = getActivePanel();
+    if (!panel) return;
+    document.getElementById('exportdialog').style.display = 'block';
+    document.getElementById('export_hash_url').value = panel.storage.getHashUrl();
   };
   document.getElementById('exportdialog').onclick = function (e) {
-    if (e.target == document.getElementById('exportdialog'))
-      document.getElementById('exportdialog').style.display = 'none';
+    if (e.target === document.getElementById('exportdialog')) document.getElementById('exportdialog').style.display = 'none';
   };
-  document.getElementById('exportdialogclose').onclick = function () {
-    document.getElementById('exportdialog').style.display = 'none';
-  };
-  document.getElementById('export_gist').onclick = function () {
-    var url = document.getElementById('export_gist_url').value;
-    var username = document.getElementById('export_gist_username').value;
-    var token = document.getElementById('export_gist_token').value;
-
-    url = storage.saveGithubGist(username, token, url);
-    if (url == null) {
+  document.getElementById('exportdialogclose').onclick = () => { document.getElementById('exportdialog').style.display = 'none'; };
+  document.getElementById('export_gist').onclick = () => {
+    const panel = getActivePanel();
+    if (!panel) return;
+    const url = document.getElementById('export_gist_url').value;
+    const username = document.getElementById('export_gist_username').value;
+    const token = document.getElementById('export_gist_token').value;
+    const resultUrl = panel.storage.saveGithubGist(username, token, url);
+    if (resultUrl == null) {
       document.getElementById('export_gist_import_url').value = 'Gist create/update failed. Incorrect token?';
     } else {
-      document.getElementById('export_gist_url').value = url;
-
-      var auto_import_url = new URL(document.location);
-      auto_import_url.hash = url;
-      document.getElementById('export_gist_import_url').value = auto_import_url.toString();
+      document.getElementById('export_gist_url').value = resultUrl;
+      const autoImportUrl = new URL(document.location);
+      autoImportUrl.hash = resultUrl;
+      document.getElementById('export_gist_import_url').value = autoImportUrl.toString();
     }
   };
-  document.getElementById('export_zip').onclick = function () {
-    storage.downloadZip();
+  document.getElementById('export_zip').onclick = () => {
+    const panel = getActivePanel();
+    if (panel) panel.storage.downloadZip();
   };
 
-  document.getElementById('infomenu').onclick = function () {
-    document.getElementById('infodialog').style.display = 'block';
-  };
+  // ── 信息对话框 ──
+  document.getElementById('infomenu').onclick = () => { document.getElementById('infodialog').style.display = 'block'; };
   document.getElementById('infodialog').onclick = function (e) {
-    if (e.target == document.getElementById('infodialog')) document.getElementById('infodialog').style.display = 'none';
+    if (e.target === document.getElementById('infodialog')) document.getElementById('infodialog').style.display = 'none';
   };
-  document.getElementById('infodialogclose').onclick = function () {
-    document.getElementById('infodialog').style.display = 'none';
-  };
+  document.getElementById('infodialogclose').onclick = () => { document.getElementById('infodialog').style.display = 'none'; };
 
-  document.getElementById('auto_url_update').checked = storage.config.autoUrl;
+  // ── 设置 ──
+  const { config } = storageMod;
+  document.getElementById('auto_url_update').checked = config.autoUrl;
   document.getElementById('auto_url_update').onclick = function () {
-    storage.config.autoUrl = document.getElementById('auto_url_update').checked;
-    if (storage.config.autoUrl) storage.update();
+    config.autoUrl = document.getElementById('auto_url_update').checked;
+    const panel = getActivePanel();
+    if (config.autoUrl && panel) panel.storage.update();
     else document.location.hash = '';
   };
-  document.getElementById('auto_local_storage_update').checked = storage.config.autoLocalStorage;
+  document.getElementById('auto_local_storage_update').checked = config.autoLocalStorage;
   document.getElementById('auto_local_storage_update').onclick = function () {
-    storage.config.autoLocalStorage = document.getElementById('auto_local_storage_update').checked;
-    storage.update();
+    config.autoLocalStorage = document.getElementById('auto_local_storage_update').checked;
+    const panel = getActivePanel();
+    if (panel) panel.storage.update();
   };
 
-  document.getElementById('settingsmenu').onclick = function () {
-    document.getElementById('settingsdialog').style.display = 'block';
-  };
+  document.getElementById('settingsmenu').onclick = () => { document.getElementById('settingsdialog').style.display = 'block'; };
   document.getElementById('settingsdialog').onclick = function (e) {
-    if (e.target == document.getElementById('settingsdialog'))
-      document.getElementById('settingsdialog').style.display = 'none';
+    if (e.target === document.getElementById('settingsdialog')) document.getElementById('settingsdialog').style.display = 'none';
   };
-  document.getElementById('settingsdialogclose').onclick = function () {
-    document.getElementById('settingsdialog').style.display = 'none';
-  };
-  document.getElementById('compiler_settings_set').onclick = function () {
-    urlParams = new URLSearchParams(window.location.search);
-    var asmOptions = document.getElementById('compiler_settings_asm').value.trim();
-    if (asmOptions != '') {
-      urlParams.set('asm', asmOptions);
-      compiler.setAsmOptions(asmOptions.split(' '));
-    } else {
-      compiler.setAsmOptions([]);
-      urlParams.delete('asm');
-    }
-    var linkOptions = document.getElementById('compiler_settings_link').value.trim();
-    if (linkOptions != '') {
-      urlParams.set('link', linkOptions);
-      compiler.setLinkOptions(linkOptions.split(' '));
-    } else {
-      compiler.setLinkOptions([]);
-      urlParams.delete('link');
-    }
-    var fixOptions = document.getElementById('compiler_settings_fix').value.trim();
-    if (fixOptions != '') {
-      urlParams.set('fix', fixOptions);
-      compiler.setFixOptions(fixOptions.split(' '));
-    } else {
-      urlParams.delete('fix');
-      compiler.setFixOptions([]);
-    }
-    var url = new URL(window.location);
-    url.search = urlParams.toString();
+  document.getElementById('settingsdialogclose').onclick = () => { document.getElementById('settingsdialog').style.display = 'none'; };
+  document.getElementById('compiler_settings_set').onclick = () => {
+    const panel = getActivePanel();
+    if (!panel) return;
+    const params = new URLSearchParams(window.location.search);
+    const asmOptions = document.getElementById('compiler_settings_asm').value.trim();
+    if (asmOptions) { params.set('asm', asmOptions); panel.compiler.setAsmOptions(asmOptions.split(' ')); }
+    else { panel.compiler.setAsmOptions([]); params.delete('asm'); }
+    const linkOptions = document.getElementById('compiler_settings_link').value.trim();
+    if (linkOptions) { params.set('link', linkOptions); panel.compiler.setLinkOptions(linkOptions.split(' ')); }
+    else { panel.compiler.setLinkOptions([]); params.delete('link'); }
+    const fixOptions = document.getElementById('compiler_settings_fix').value.trim();
+    if (fixOptions) { params.set('fix', fixOptions); panel.compiler.setFixOptions(fixOptions.split(' ')); }
+    else { panel.compiler.setFixOptions([]); params.delete('fix'); }
+    const url = new URL(window.location);
+    url.search = params.toString();
     window.history.replaceState({}, '', url);
     document.getElementById('settingsdialog').style.display = 'none';
     compileCode();
   };
+
   if (urlParams.has('autorun')) {
     document.getElementById('cpu_run_check').checked = true;
     document.getElementById('cpu_run_check').onclick();
+  }
+}
+
+// ── 辅助 ──
+
+function applyCompilerOptions(urlParams) {
+  const panel = getActivePanel();
+  if (!panel) return;
+  const compiler = panel.compiler;
+  const asmOptions = (urlParams.get('asm') ?? '').trim();
+  if (asmOptions) {
+    document.getElementById('compiler_settings_asm').value = asmOptions;
+    compiler.setAsmOptions(asmOptions.split(' '));
+  }
+  const linkOptions = (urlParams.get('link') ?? '').trim();
+  if (linkOptions) {
+    document.getElementById('compiler_settings_link').value = linkOptions;
+    compiler.setLinkOptions(linkOptions.split(' '));
+  }
+  const fixOptions = (urlParams.get('fix') ?? '').trim();
+  if (fixOptions) {
+    document.getElementById('compiler_settings_fix').value = fixOptions;
+    compiler.setFixOptions(fixOptions.split(' '));
   }
 }

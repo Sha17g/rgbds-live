@@ -1,232 +1,269 @@
 import ace from './ace/loader.js';
-import * as compiler from './compiler.js';
-import * as storage from './storage.js';
-import * as main from './main.js';
 import './ace/mode-sm83.js';
-
-ace.config.set('basePath', `assets/ace`);
 
 import { TokenTooltip } from './ace/sm83tooltip.js';
 import { sm83Completer } from './ace/complete-sm83.js';
 
-var editors = [];
-var current_file = null;
-var errors = {};
-var cpu_line_filename = null;
-var cpu_line_line_nr = null;
-var cpu_line_marker = null;
-var breakpoints = [];
-var cursor_position_per_file = {};
-
-const runColorMode = (fn) => {
-  if (!window.matchMedia) {
-    return;
-  }
+// ---------------------------------------------------------------------------
+// 辅助：跟随系统暗色模式
+// ---------------------------------------------------------------------------
+const runColorMode = (editor) => {
+  if (!window.matchMedia) return;
   const query = window.matchMedia('(prefers-color-scheme: dark)');
-  fn(query.matches);
-  query.addEventListener('change', (event) => fn(event.matches));
+  const apply = (isDark) => {
+    editor.setTheme(isDark ? 'ace/theme/tomorrow_night_eighties' : 'ace/theme/tomorrow');
+  };
+  apply(query.matches);
+  query.addEventListener('change', (event) => apply(event.matches));
 };
 
-export function register(div_id, compileCode) {
-  var e = ace.edit(div_id);
-  new TokenTooltip(e);
-  runColorMode((isDarkMode) => {
-    e.setTheme(isDarkMode ? 'ace/theme/tomorrow_night_eighties' : 'ace/theme/tomorrow');
-  });
-  e.session.setMode('ace/mode/sm83');
-  e.setOptions({
-    tabSize: 2,
-    useSoftTabs: true,
-    navigateWithinSoftTabs: true,
-    enableBasicAutocompletion: true,
-    enableLiveAutocompletion: true,
-    enableSnippets: true,
-  });
-  ace.require('ace/ext/language_tools').addCompleter(sm83Completer);
+// ---------------------------------------------------------------------------
+// TextEditor 类
+// ---------------------------------------------------------------------------
 
-  e.session.on('change', function (delta) {
-    if (e.curOp && e.curOp.command.name) {
-      storage.update(current_file, e.getValue());
-      compileCode();
+export class TextEditor {
+  /**
+   * @param {object} opts
+   * @param {string} opts.divId               Ace 挂载容器 ID
+   * @param {import('./storage.js').Storage} opts.storage  文件仓库实例
+   * @param {import('./compiler.js').Compiler} opts.compiler 编译器实例
+   * @param {Function} opts.compileCallback   编辑后触发编译的回调
+   * @param {Function} opts.onBreakpointChange 断点变更回调
+   */
+  constructor({ divId, storage, compiler, compileCallback, onBreakpointChange }) {
+    this.storage = storage;
+    this.compiler = compiler;
+    this.compileCallback = compileCallback;
+    this.onBreakpointChange = onBreakpointChange || (() => {});
+
+    /** @type {Array<[string, number]>} [filename, lineNr] */
+    this.breakpoints = [];
+
+    /** @type {Object<string, any>} 每文件光标位置 */
+    this.cursorPositionPerFile = {};
+
+    this.currentFile = null;
+    this.cpuLineFilename = null;
+    this.cpuLineNr = null;
+    this.cpuLineMarker = null;
+
+    // 创建 Ace 编辑器
+    ace.config.set('basePath', 'assets/ace');
+
+    const e = ace.edit(divId);
+    new TokenTooltip(e);
+    runColorMode(e);
+    e.session.setMode('ace/mode/sm83');
+    e.setOptions({
+      tabSize: 2,
+      useSoftTabs: true,
+      navigateWithinSoftTabs: true,
+      enableBasicAutocompletion: true,
+      enableLiveAutocompletion: true,
+      enableSnippets: true,
+    });
+    ace.require('ace/ext/language_tools').addCompleter(sm83Completer);
+
+    const self = this;
+    e.session.on('change', function (delta) {
+      if (e.curOp && e.curOp.command.name) {
+        self.storage.update(self.currentFile, e.getValue());
+        self.compileCallback();
+      }
+    });
+    e.on('guttermousedown', function (event) {
+      const target = event.domEvent.target;
+      if (target.className.indexOf('ace_gutter-cell') === -1) return;
+      const row = event.getDocumentPosition().row;
+      self._toggleBreakpoint(self.currentFile, row + 1);
+      event.stop();
+    });
+
+    this._setupFontSize(e);
+    this._setupViewMenu();
+
+    this.editor = e;
+  }
+
+  // ---- 文件切换 ----
+
+  setCurrentFile(filename) {
+    if (this.currentFile != null) {
+      this.cursorPositionPerFile[this.currentFile] = this.editor.selection.getCursor();
     }
-  });
-  e.on('guttermousedown', function (event) {
-    var target = event.domEvent.target;
+    this.currentFile = filename;
+    this.editor.setValue(this.storage.getFiles()[filename]);
+    this.editor.selection.clearSelection();
+    this.editor.session.getUndoManager().reset();
+    const pos = this.cursorPositionPerFile[filename];
+    if (pos) this.editor.selection.moveCursorToPosition(pos);
+    else this.editor.selection.moveCursorTo(0, 0);
+    this.editor.scrollToLine(this.editor.selection.getCursor().row, true);
+    this.editor.focus();
+    this.updateErrors();
+    this._updateCpuLine();
+  }
 
-    if (target.className.indexOf('ace_gutter-cell') == -1) return;
-    var row = event.getDocumentPosition().row;
-    toggleBreakpoint(current_file, row + 1);
-    event.stop();
-  });
+  // ---- 错误标注 ----
 
-  // Font size control via keyboard shortcuts (Ctrl+=/-, Ctrl+0) and View menu buttons
-  (function () {
-    var DEFAULT_SIZE = 14;
-    var MIN_SIZE = 8;
-    var MAX_SIZE = 32;
-    var STORAGE_KEY = 'aceFontSize';
+  updateErrors() {
+    const annotations = [];
+    for (const [type, filename, lineNr, message] of this.compiler.getErrors()) {
+      if (filename !== this.currentFile) continue;
+      annotations.push({ row: lineNr - 1, column: 0, type, text: message });
+    }
+    this.editor.session.setAnnotations(annotations);
+  }
 
-    var currentSize = parseInt(localStorage.getItem(STORAGE_KEY)) || DEFAULT_SIZE;
+  // ---- CPU 调试行 ----
+
+  setCpuLine(filename, lineNr, scrollToLine) {
+    this.cpuLineFilename = filename;
+    this.cpuLineNr = lineNr;
+    this._updateCpuLine(scrollToLine);
+  }
+
+  _updateCpuLine(scrollToLine) {
+    if (scrollToLine && this.currentFile != null && this.currentFile !== this.cpuLineFilename) {
+      this.setCurrentFile(this.cpuLineFilename);
+    }
+
+    if (this.cpuLineMarker != null) {
+      this.editor.session.removeMarker(this.cpuLineMarker);
+      this.cpuLineMarker = null;
+    }
+
+    if (this.cpuLineFilename === this.currentFile) {
+      this.cpuLineMarker = this.editor.session.addMarker(
+        new ace.Range(this.cpuLineNr - 1, 0, this.cpuLineNr - 1, 1),
+        'cpuLineMarker',
+        'fullLine',
+      );
+      if (scrollToLine) this.editor.scrollToLine(this.cpuLineNr - 1, true, false, () => {});
+    }
+  }
+
+  // ---- 断点 ----
+
+  getBreakpoints() {
+    return this.breakpoints.map(([fn, ln]) => [fn, ln, true]);
+  }
+
+  _addBreakpoint(filename, lineNr) {
+    this.breakpoints.push([filename, lineNr]);
+    this.onBreakpointChange();
+    this._renderBreakpoints();
+  }
+
+  _removeBreakpoint(filename, lineNr) {
+    this.breakpoints = this.breakpoints.filter((d) => d[0] !== filename || d[1] !== lineNr);
+    this.onBreakpointChange();
+    this._renderBreakpoints();
+  }
+
+  _toggleBreakpoint(filename, lineNr) {
+    const idx = this.breakpoints.findIndex((d) => d[0] === filename && d[1] === lineNr);
+    if (idx > -1) this._removeBreakpoint(filename, lineNr);
+    else this._addBreakpoint(filename, lineNr);
+  }
+
+  _renderBreakpoints() {
+    this.editor.session.clearBreakpoints();
+    for (const [filename, lineNr] of this.breakpoints) {
+      if (filename === this.currentFile) {
+        this.editor.session.setBreakpoint(lineNr - 1, 'ace_breakpoint');
+      }
+    }
+  }
+
+  // ---- 显隐 ----
+
+  hide() {
+    this.editor.renderer.getContainerElement().style.display = 'none';
+  }
+
+  show() {
+    this.editor.renderer.getContainerElement().style.display = '';
+    this.editor.resize();
+    this.editor.renderer.updateFull();
+  }
+
+  // ---- 字体大小控制 ----
+
+  _setupFontSize(e) {
+    const DEFAULT = 14;
+    const MIN = 8;
+    const MAX = 32;
+    const KEY = 'aceFontSize';
+
+    let currentSize = parseInt(localStorage.getItem(KEY)) || DEFAULT;
     e.setFontSize(currentSize + 'px');
 
-    function applyFontSize(size) {
+    const apply = (size) => {
       e.setFontSize(size + 'px');
-      var display = document.getElementById('view_font_size_display');
+      const display = document.getElementById('view_font_size_display');
       if (display) display.textContent = size;
-    }
-
-    window.changeEditorFontSize = function (delta) {
-      var newSize = currentSize + delta;
-      if (newSize < MIN_SIZE || newSize > MAX_SIZE) return;
-      currentSize = newSize;
-      applyFontSize(currentSize);
-      localStorage.setItem(STORAGE_KEY, currentSize);
     };
 
-    // Initialize display
-    applyFontSize(currentSize);
+    window.changeEditorFontSize = (delta) => {
+      const ns = currentSize + delta;
+      if (ns < MIN || ns > MAX) return;
+      currentSize = ns;
+      apply(currentSize);
+      localStorage.setItem(KEY, currentSize);
+    };
+
+    apply(currentSize);
 
     e.commands.addCommand({
       name: 'increaseFontSize',
       bindKey: { win: 'Ctrl-=', mac: 'Command-=' },
-      exec: function () {
-        window.changeEditorFontSize(1);
-      },
+      exec: () => window.changeEditorFontSize(1),
     });
-
     e.commands.addCommand({
       name: 'decreaseFontSize',
       bindKey: { win: 'Ctrl--', mac: 'Command--' },
-      exec: function () {
-        window.changeEditorFontSize(-1);
-      },
+      exec: () => window.changeEditorFontSize(-1),
     });
-
     e.commands.addCommand({
       name: 'resetFontSize',
       bindKey: { win: 'Ctrl-0', mac: 'Command-0' },
-      exec: function () {
-        currentSize = DEFAULT_SIZE;
-        applyFontSize(currentSize);
-        localStorage.setItem(STORAGE_KEY, currentSize);
-      },
+      exec: () => { currentSize = DEFAULT; apply(currentSize); localStorage.setItem(KEY, currentSize); },
     });
-  })();
+  }
 
-  // Bind View menu buttons
-  (function () {
-    var decrBtn = document.getElementById('view_font_decrease');
-    var incrBtn = document.getElementById('view_font_increase');
-    if (decrBtn) decrBtn.addEventListener('click', function () { window.changeEditorFontSize(-1); });
-    if (incrBtn) incrBtn.addEventListener('click', function () { window.changeEditorFontSize(1); });
+  _setupViewMenu() {
+    const decr = document.getElementById('view_font_decrease');
+    const incr = document.getElementById('view_font_increase');
+    if (decr) decr.addEventListener('click', () => window.changeEditorFontSize(-1));
+    if (incr) incr.addEventListener('click', () => window.changeEditorFontSize(1));
 
-    var cb = document.getElementById('view_insert_match_only');
+    const cb = document.getElementById('view_insert_match_only');
     if (cb) {
       cb.checked = localStorage.getItem('insertMatchOnly') === 'true';
-      cb.addEventListener('change', function () {
+      cb.addEventListener('change', () => {
         localStorage.setItem('insertMatchOnly', cb.checked);
         window._insertMatchOnly = cb.checked;
       });
       window._insertMatchOnly = cb.checked;
     }
-  })();
-
-  editors.push(e);
-}
-
-export function setCurrentFile(filename) {
-  if (current_file != null) cursor_position_per_file[current_file] = editors[0].selection.getCursor();
-  current_file = filename;
-  editors[0].setValue(storage.getFiles()[filename]);
-  editors[0].selection.clearSelection();
-  editors[0].session.getUndoManager().reset();
-  if (current_file in cursor_position_per_file)
-    editors[0].selection.moveCursorToPosition(cursor_position_per_file[current_file]);
-  else editors[0].selection.moveCursorTo(0, 0);
-  editors[0].scrollToLine(editors[0].selection.getCursor().row, true);
-  editors[0].focus();
-  updateErrors();
-  updateCpuLine();
-}
-
-export function updateErrors() {
-  var annotations = [];
-  for (var [type, filename, line_nr, message] of compiler.getErrors()) {
-    if (filename != current_file) continue;
-    annotations.push({
-      row: line_nr - 1,
-      column: 0,
-      type: type,
-      text: message,
-    });
-  }
-  editors[0].session.setAnnotations(annotations);
-}
-
-export function setCpuLine(filename, line_nr, scroll_to_line) {
-  cpu_line_filename = filename;
-  cpu_line_line_nr = line_nr;
-  updateCpuLine(scroll_to_line);
-}
-
-function addBreakpoint(filename, line_nr) {
-  breakpoints.push([filename, line_nr]);
-  main.updateBreakpoints();
-  updateBreakpoints();
-}
-
-function removeBreakpoint(filename, line_nr) {
-  breakpoints = breakpoints.filter((data) => data[0] != filename || data[1] != line_nr);
-  main.updateBreakpoints();
-  updateBreakpoints();
-}
-
-function toggleBreakpoint(filename, line_nr) {
-  var idx = breakpoints.findIndex((data) => data[0] == filename && data[1] == line_nr);
-  if (idx > -1) removeBreakpoint(filename, line_nr);
-  else addBreakpoint(filename, line_nr);
-}
-
-function updateBreakpoints() {
-  editors[0].session.clearBreakpoints();
-  for (var [filename, line_nr, valid] of breakpoints) {
-    if (filename == current_file)
-      editors[0].session.setBreakpoint(line_nr - 1, valid ? 'ace_breakpoint' : 'ace_invalid_breakpoint');
   }
 }
 
-function updateCpuLine(scroll_to_line) {
-  if (scroll_to_line && current_file != null && current_file != cpu_line_filename) setCurrentFile(cpu_line_filename);
+// ---------------------------------------------------------------------------
+// 向后兼容：模块级导出
+// 这些模块级函数需要一个"注册过的"全局单例来代理。
+// 默认情况下由 main.js 调用 register() 后设置，这里先留空。
+// ---------------------------------------------------------------------------
 
-  if (cpu_line_marker != null) {
-    editors[0].session.removeMarker(cpu_line_marker);
-    cpu_line_marker = null;
-  }
+let _defaultInstance = null;
 
-  if (cpu_line_filename == current_file) {
-    cpu_line_marker = editors[0].session.addMarker(
-      new ace.Range(cpu_line_line_nr - 1, 0, cpu_line_line_nr - 1, 1),
-      'cpuLineMarker',
-      'fullLine',
-    );
-    if (scroll_to_line) editors[0].scrollToLine(cpu_line_line_nr - 1, true, false, function () {});
-  }
-}
-
-export function getCurrentFilename() {
-  return current_file;
-}
-
-export function getBreakpoints() {
-  return breakpoints;
-}
-
-export function hide() {
-  editors[0].renderer.getContainerElement().style.display = 'none';
-}
-
-export function show() {
-  editors[0].renderer.getContainerElement().style.display = '';
-  editors[0].resize();
-  editors[0].renderer.updateFull();
-}
+export function setDefaultInstance(inst) { _defaultInstance = inst; }
+export function getCurrentFilename()  { return _defaultInstance ? _defaultInstance.currentFile : null; }
+export function getBreakpoints()      { return _defaultInstance ? _defaultInstance.getBreakpoints() : []; }
+export function setCurrentFile(fn)    { if (_defaultInstance) _defaultInstance.setCurrentFile(fn); }
+export function updateErrors()        { if (_defaultInstance) _defaultInstance.updateErrors(); }
+export function setCpuLine(fn, ln, s) { if (_defaultInstance) _defaultInstance.setCpuLine(fn, ln, s); }
+export function hide()                { if (_defaultInstance) _defaultInstance.hide(); }
+export function show()                { if (_defaultInstance) _defaultInstance.show(); }
+export function getInstance()         { return _defaultInstance; }

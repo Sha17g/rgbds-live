@@ -1,216 +1,320 @@
 import Binjgb from '../binjgb/out/binjgb.js';
 
+// WASM 模块是只读共享的，所有 Emulator 实例共用
 const Module = await Binjgb();
 
-var e;
-var rom_size = 0;
-var canvas_ctx;
-var canvas_image_data;
-var audio_ctx;
-var audio_time;
-var serial_callback = null;
-var audio_buffer_size = 2048;
+// ---------------------------------------------------------------------------
+// 模块级 serial callback — WASM 会直接调用这个函数名
+// 默认转发给单例实例的 onSerial 回调
+// ---------------------------------------------------------------------------
+let _serialRelay = null;
 
-export function init(canvas, rom_data) {
-  if (isAvailable()) destroy();
+export function serialCallback(value) {
+  if (_serialRelay) _serialRelay(value);
+}
 
-  if (typeof audio_ctx == 'undefined') audio_ctx = new AudioContext();
+export class Emulator {
+  // -----------------------------------------------------------------------
+  // 实例属性
+  // -----------------------------------------------------------------------
 
-  var required_size = ((rom_data.length - 1) | 0x3fff) + 1;
-  if (required_size < 0x8000) required_size = 0x8000;
-  var rom_ptr = Module._malloc(required_size);
-  rom_size = required_size;
+  /** @type {number|undefined} WASM 模拟器指针 */
+  e;
 
-  const romView = Module.HEAP8.subarray(rom_ptr, rom_ptr + rom_size);
-  romView.fill(0);
-  romView.set(rom_data);
+  /** @type {number} ROM 分配大小 */
+  romSize = 0;
 
-  // Note: this takes ownership of `rom_ptr`, even if init fails.
-  //       The ROM will be freed when `emulator_delete` is called from `destroy()`, and not leaked.
-  e = Module._emulator_new_simple(rom_ptr, rom_size, audio_ctx.sampleRate, audio_buffer_size);
-  Module._emulator_set_bw_palette_simple(e, 0, 0xffc2f0c4, 0xffa8b95a, 0xff6e601e, 0xff001b2d);
-  Module._emulator_set_bw_palette_simple(e, 1, 0xffc2f0c4, 0xffa8b95a, 0xff6e601e, 0xff001b2d);
-  Module._emulator_set_bw_palette_simple(e, 2, 0xffc2f0c4, 0xffa8b95a, 0xff6e601e, 0xff001b2d);
-  Module._emulator_set_default_joypad_callback(e, 0);
+  /** @type {CanvasRenderingContext2D|null} 主屏幕 canvas 2D 上下文 */
+  canvasCtx = null;
 
-  if (canvas) {
-    canvas_ctx = canvas.getContext('2d');
-    canvas_image_data = canvas_ctx.createImageData(canvas.width, canvas.height);
+  /** @type {ImageData|null} 主屏幕图像数据 */
+  canvasImageData = null;
+
+  /** @type {AudioContext|null} Web Audio 上下文 */
+  audioCtx = null;
+
+  /** @type {number} 音频时间基准 */
+  audioTime = 0;
+
+  /** @type {Function|null} 串行输出回调 */
+  onSerial = null;
+
+  /** @type {number} 音频缓冲区大小 */
+  audioBufferSize = 2048;
+
+  // -----------------------------------------------------------------------
+  // 初始化 / 销毁
+  // -----------------------------------------------------------------------
+
+  /**
+   * 初始化模拟器
+   * @param {HTMLCanvasElement|null} canvas 渲染目标 canvas
+   * @param {Uint8Array} romData ROM 数据
+   */
+  init(canvas, romData) {
+    if (this.isAvailable()) this.destroy();
+
+    if (!this.audioCtx) this.audioCtx = new AudioContext();
+
+    const requiredSize = ((romData.length - 1) | 0x3fff) + 1;
+    const size = requiredSize < 0x8000 ? 0x8000 : requiredSize;
+    const romPtr = Module._malloc(size);
+    this.romSize = size;
+
+    const romView = Module.HEAP8.subarray(romPtr, romPtr + size);
+    romView.fill(0);
+    romView.set(romData);
+
+    this.e = Module._emulator_new_simple(romPtr, size, this.audioCtx.sampleRate, this.audioBufferSize);
+    Module._emulator_set_bw_palette_simple(this.e, 0, 0xffc2f0c4, 0xffa8b95a, 0xff6e601e, 0xff001b2d);
+    Module._emulator_set_bw_palette_simple(this.e, 1, 0xffc2f0c4, 0xffa8b95a, 0xff6e601e, 0xff001b2d);
+    Module._emulator_set_bw_palette_simple(this.e, 2, 0xffc2f0c4, 0xffa8b95a, 0xff6e601e, 0xff001b2d);
+    Module._emulator_set_default_joypad_callback(this.e, 0);
+
+    if (canvas) {
+      this.canvasCtx = canvas.getContext('2d');
+      this.canvasImageData = this.canvasCtx.createImageData(canvas.width, canvas.height);
+    }
+
+    this.audioCtx.resume();
+    this.audioTime = this.audioCtx.currentTime;
   }
 
-  audio_ctx.resume();
-  audio_time = audio_ctx.currentTime;
-}
+  destroy() {
+    if (!this.isAvailable()) return;
+    Module._emulator_delete(this.e);
+    this.e = undefined;
+    this.canvasCtx = null;
+    this.canvasImageData = null;
+    this.romSize = 0;
+  }
 
-export function destroy() {
-  if (!isAvailable()) return;
-  Module._emulator_delete(e);
-  e = undefined;
-}
+  isAvailable() {
+    return typeof this.e !== 'undefined';
+  }
 
-export function isAvailable() {
-  return typeof e != 'undefined';
-}
+  // -----------------------------------------------------------------------
+  // 运行控制
+  // -----------------------------------------------------------------------
 
-export function step(step_type) {
-  if (!isAvailable()) return;
-  var ticks = Module._emulator_get_ticks_f64(e);
-  if (step_type == 'single') ticks += 1;
-  else if (step_type == 'frame') ticks += 70224;
-  while (true) {
-    var result = Module._emulator_run_until_f64(e, ticks);
-    if (result & 2) processAudioBuffer();
-    if (result & 8)
-      // Breakpoint hit
-      return true;
-    if (result & 16)
-      // Illegal instruction
-      return true;
-    if (result != 2 && step_type != 'run') return false;
-    if (step_type == 'run') {
-      if (result & 4) {
-        // Sync to the audio buffer, make sure we have 100ms of audio data buffered.
-        if (audio_time < audio_ctx.currentTime + 0.1) ticks += 70224;
-        else return false;
+  /**
+   * @param {string} stepType 'single' | 'frame' | 'run'
+   * @returns {boolean} 是否命中断点或非法指令
+   */
+  step(stepType) {
+    if (!this.isAvailable()) return;
+    let ticks = Module._emulator_get_ticks_f64(this.e);
+    if (stepType === 'single') ticks += 1;
+    else if (stepType === 'frame') ticks += 70224;
+
+    // 路由 serial callback 到当前实例
+    _serialRelay = (value) => { if (this.onSerial) this.onSerial(value); };
+
+    while (true) {
+      const result = Module._emulator_run_until_f64(this.e, ticks);
+      if (result & 2) this._processAudioBuffer();
+      if (result & 8) { _serialRelay = null; return true; }  // breakpoint
+      if (result & 16) { _serialRelay = null; return true; } // illegal instruction
+      if (result !== 2 && stepType !== 'run') { _serialRelay = null; return false; }
+      if (stepType === 'run') {
+        if (result & 4) {
+          if (this.audioTime < this.audioCtx.currentTime + 0.1) ticks += 70224;
+          else { _serialRelay = null; return false; }
+        }
       }
     }
   }
-}
 
-export function renderScreen() {
-  if (!isAvailable()) return;
-  var buffer = new Uint8Array(Module.HEAP8.buffer, Module._get_frame_buffer_ptr(e), Module._get_frame_buffer_size(e));
-  canvas_image_data.data.set(buffer);
-  canvas_ctx.putImageData(canvas_image_data, 0, 0);
-}
+  // -----------------------------------------------------------------------
+  // 渲染
+  // -----------------------------------------------------------------------
 
-export function renderVRam(canvas) {
-  if (!isAvailable()) return;
-  var ctx = canvas.getContext('2d');
-  var image_data = canvas_ctx.createImageData(256, 256);
-  var ptr = Module._malloc(4 * 256 * 256);
-  Module._emulator_render_vram(e, ptr);
-  var buffer = new Uint8Array(Module.HEAP8.buffer, ptr, 4 * 256 * 256);
-  image_data.data.set(buffer);
-  ctx.putImageData(image_data, 0, 0);
-  Module._free(ptr);
-}
-
-export function renderBackground(canvas, type) {
-  if (!isAvailable()) return;
-  var ctx = canvas.getContext('2d');
-  var image_data = canvas_ctx.createImageData(256, 256);
-  var ptr = Module._malloc(4 * 256 * 256);
-  Module._emulator_render_background(e, ptr, type);
-  var buffer = new Uint8Array(Module.HEAP8.buffer, ptr, 4 * 256 * 256);
-  image_data.data.set(buffer);
-  ctx.putImageData(image_data, 0, 0);
-  Module._free(ptr);
-}
-
-export function getWRam() {
-  if (!isAvailable()) return;
-
-  var ptr = Module._emulator_get_wram_ptr(e);
-  return new Uint8Array(Module.HEAP8.buffer, ptr, 0x8000);
-}
-
-export function getHRam() {
-  if (!isAvailable()) return;
-
-  var ptr = Module._emulator_get_hram_ptr(e);
-  return new Uint8Array(Module.HEAP8.buffer, ptr, 0x7f);
-}
-
-export function getPC() {
-  return Module._emulator_get_PC(e);
-}
-export function setPC(pc) {
-  Module._emulator_set_PC(e, pc);
-}
-export function getSP() {
-  return Module._emulator_get_SP(e);
-}
-export function getA() {
-  return Module._emulator_get_A(e);
-}
-export function getBC() {
-  return Module._emulator_get_BC(e);
-}
-export function getDE() {
-  return Module._emulator_get_DE(e);
-}
-export function getHL() {
-  return Module._emulator_get_HL(e);
-}
-export function getFlags() {
-  var flags = Module._emulator_get_F(e);
-  var result = '';
-  if (flags & 0x80) result += 'Z ';
-  if (flags & 0x10) result += 'C ';
-  if (flags & 0x20) result += 'H ';
-  if (flags & 0x40) result += 'N ';
-  return result;
-}
-export function readMem(addr) {
-  if (!isAvailable()) return 0xff;
-  return Module._emulator_read_mem(e, addr);
-}
-export function writeMem(addr, data) {
-  if (!isAvailable()) return;
-  return Module._emulator_write_mem(e, addr, data);
-}
-
-export function setBreakpoint(pc) {
-  if (!isAvailable()) return;
-  Module._emulator_set_breakpoint(e, pc);
-}
-export function clearBreakpoints() {
-  if (!isAvailable()) return;
-  Module._emulator_clear_breakpoints(e);
-}
-
-export function setKeyPad(key, down) {
-  if (!isAvailable()) return;
-  if (key == 'right') Module._set_joyp_right(e, down);
-  if (key == 'left') Module._set_joyp_left(e, down);
-  if (key == 'up') Module._set_joyp_up(e, down);
-  if (key == 'down') Module._set_joyp_down(e, down);
-  if (key == 'a') Module._set_joyp_A(e, down);
-  if (key == 'b') Module._set_joyp_B(e, down);
-  if (key == 'select') Module._set_joyp_select(e, down);
-  if (key == 'start') Module._set_joyp_start(e, down);
-}
-
-export function setSerialCallback(callback) {
-  serial_callback = callback;
-}
-
-export function serialCallback(value) {
-  if (serial_callback) serial_callback(value);
-}
-
-function processAudioBuffer() {
-  if (audio_time < audio_ctx.currentTime) audio_time = audio_ctx.currentTime;
-
-  var input_buffer = new Uint8Array(
-    Module.HEAP8.buffer,
-    Module._get_audio_buffer_ptr(e),
-    Module._get_audio_buffer_capacity(e),
-  );
-  const volume = 0.5;
-  const buffer = audio_ctx.createBuffer(2, audio_buffer_size, audio_ctx.sampleRate);
-  const channel0 = buffer.getChannelData(0);
-  const channel1 = buffer.getChannelData(1);
-
-  for (let i = 0; i < audio_buffer_size; i++) {
-    channel0[i] = (input_buffer[2 * i] * volume) / 255;
-    channel1[i] = (input_buffer[2 * i + 1] * volume) / 255;
+  renderScreen() {
+    if (!this.isAvailable()) return;
+    const buffer = new Uint8Array(
+      Module.HEAP8.buffer,
+      Module._get_frame_buffer_ptr(this.e),
+      Module._get_frame_buffer_size(this.e),
+    );
+    this.canvasImageData.data.set(buffer);
+    this.canvasCtx.putImageData(this.canvasImageData, 0, 0);
   }
-  const bufferSource = audio_ctx.createBufferSource();
-  bufferSource.buffer = buffer;
-  bufferSource.connect(audio_ctx.destination);
-  bufferSource.start(audio_time);
-  const buffer_sec = audio_buffer_size / audio_ctx.sampleRate;
-  audio_time += buffer_sec;
+
+  renderVRam(canvas) {
+    if (!this.isAvailable()) return;
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.createImageData(256, 256);
+    const ptr = Module._malloc(4 * 256 * 256);
+    Module._emulator_render_vram(this.e, ptr);
+    const buffer = new Uint8Array(Module.HEAP8.buffer, ptr, 4 * 256 * 256);
+    imageData.data.set(buffer);
+    ctx.putImageData(imageData, 0, 0);
+    Module._free(ptr);
+  }
+
+  renderBackground(canvas, type) {
+    if (!this.isAvailable()) return;
+    const ctx = canvas.getContext('2d');
+    const imageData = ctx.createImageData(256, 256);
+    const ptr = Module._malloc(4 * 256 * 256);
+    Module._emulator_render_background(this.e, ptr, type);
+    const buffer = new Uint8Array(Module.HEAP8.buffer, ptr, 4 * 256 * 256);
+    imageData.data.set(buffer);
+    ctx.putImageData(imageData, 0, 0);
+    Module._free(ptr);
+  }
+
+  // -----------------------------------------------------------------------
+  // 内存读取
+  // -----------------------------------------------------------------------
+
+  getWRam() {
+    if (!this.isAvailable()) return;
+    const ptr = Module._emulator_get_wram_ptr(this.e);
+    return new Uint8Array(Module.HEAP8.buffer, ptr, 0x8000);
+  }
+
+  getHRam() {
+    if (!this.isAvailable()) return;
+    const ptr = Module._emulator_get_hram_ptr(this.e);
+    return new Uint8Array(Module.HEAP8.buffer, ptr, 0x7f);
+  }
+
+  readMem(addr) {
+    if (!this.isAvailable()) return 0xff;
+    return Module._emulator_read_mem(this.e, addr);
+  }
+
+  writeMem(addr, data) {
+    if (!this.isAvailable()) return;
+    Module._emulator_write_mem(this.e, addr, data);
+  }
+
+  // -----------------------------------------------------------------------
+  // CPU 寄存器
+  // -----------------------------------------------------------------------
+
+  getPC()  { return Module._emulator_get_PC(this.e); }
+  setPC(v) { Module._emulator_set_PC(this.e, v); }
+  getSP()  { return Module._emulator_get_SP(this.e); }
+  getA()   { return Module._emulator_get_A(this.e); }
+  getBC()  { return Module._emulator_get_BC(this.e); }
+  getDE()  { return Module._emulator_get_DE(this.e); }
+  getHL()  { return Module._emulator_get_HL(this.e); }
+
+  getFlags() {
+    const flags = Module._emulator_get_F(this.e);
+    let result = '';
+    if (flags & 0x80) result += 'Z ';
+    if (flags & 0x10) result += 'C ';
+    if (flags & 0x20) result += 'H ';
+    if (flags & 0x40) result += 'N ';
+    return result;
+  }
+
+  // -----------------------------------------------------------------------
+  // 断点
+  // -----------------------------------------------------------------------
+
+  setBreakpoint(pc) {
+    if (!this.isAvailable()) return;
+    Module._emulator_set_breakpoint(this.e, pc);
+  }
+
+  clearBreakpoints() {
+    if (!this.isAvailable()) return;
+    Module._emulator_clear_breakpoints(this.e);
+  }
+
+  // -----------------------------------------------------------------------
+  // 手柄输入
+  // -----------------------------------------------------------------------
+
+  setKeyPad(key, down) {
+    if (!this.isAvailable()) return;
+    if (key === 'right')  Module._set_joyp_right(this.e, down);
+    if (key === 'left')   Module._set_joyp_left(this.e, down);
+    if (key === 'up')     Module._set_joyp_up(this.e, down);
+    if (key === 'down')   Module._set_joyp_down(this.e, down);
+    if (key === 'a')      Module._set_joyp_A(this.e, down);
+    if (key === 'b')      Module._set_joyp_B(this.e, down);
+    if (key === 'select') Module._set_joyp_select(this.e, down);
+    if (key === 'start')  Module._set_joyp_start(this.e, down);
+  }
+
+  // -----------------------------------------------------------------------
+  // 串行输出
+  // -----------------------------------------------------------------------
+
+  /**
+   * 设置串行输出回调
+   * @param {Function} callback 回调函数 (value) => void
+   */
+  setSerialCallback(callback) {
+    this.onSerial = callback;
+  }
+
+  // -----------------------------------------------------------------------
+  // 内部：音频处理
+  // -----------------------------------------------------------------------
+
+  _processAudioBuffer() {
+    if (this.audioTime < this.audioCtx.currentTime) this.audioTime = this.audioCtx.currentTime;
+
+    const inputBuffer = new Uint8Array(
+      Module.HEAP8.buffer,
+      Module._get_audio_buffer_ptr(this.e),
+      Module._get_audio_buffer_capacity(this.e),
+    );
+    const volume = 0.5;
+    const buffer = this.audioCtx.createBuffer(2, this.audioBufferSize, this.audioCtx.sampleRate);
+    const channel0 = buffer.getChannelData(0);
+    const channel1 = buffer.getChannelData(1);
+
+    for (let i = 0; i < this.audioBufferSize; i++) {
+      channel0[i] = (inputBuffer[2 * i] * volume) / 255;
+      channel1[i] = (inputBuffer[2 * i + 1] * volume) / 255;
+    }
+    const bufferSource = this.audioCtx.createBufferSource();
+    bufferSource.buffer = buffer;
+    bufferSource.connect(this.audioCtx.destination);
+    bufferSource.start(this.audioTime);
+    this.audioTime += this.audioBufferSize / this.audioCtx.sampleRate;
+  }
 }
+
+// ---------------------------------------------------------------------------
+// 向后兼容：模块级导出（代理到默认单例）
+// ---------------------------------------------------------------------------
+
+const defaultInstance = new Emulator();
+let _defaultInstance = null;
+
+function _inst() { return _defaultInstance || defaultInstance; }
+
+export function setDefaultInstance(inst) { _defaultInstance = inst; }
+
+export const init               = (c, r) => _inst().init(c, r);
+export const destroy            = ()     => _inst().destroy();
+export const isAvailable        = ()     => _inst().isAvailable();
+export const step               = (t)    => _inst().step(t);
+export const renderScreen       = ()     => _inst().renderScreen();
+export const renderVRam         = (c)    => _inst().renderVRam(c);
+export const renderBackground   = (c, t) => _inst().renderBackground(c, t);
+export const getWRam            = ()     => _inst().getWRam();
+export const getHRam            = ()     => _inst().getHRam();
+export const getPC              = ()     => _inst().getPC();
+export const setPC              = (v)    => _inst().setPC(v);
+export const getSP              = ()     => _inst().getSP();
+export const getA               = ()     => _inst().getA();
+export const getBC              = ()     => _inst().getBC();
+export const getDE              = ()     => _inst().getDE();
+export const getHL              = ()     => _inst().getHL();
+export const getFlags           = ()     => _inst().getFlags();
+export const readMem            = (a)    => _inst().readMem(a);
+export const writeMem           = (a, d) => _inst().writeMem(a, d);
+export const setBreakpoint      = (p)    => _inst().setBreakpoint(p);
+export const clearBreakpoints   = ()     => _inst().clearBreakpoints();
+export const setKeyPad          = (k, d) => _inst().setKeyPad(k, d);
+export const setSerialCallback  = (cb)   => _inst().setSerialCallback(cb);
+export const getInstance        = ()     => _inst();

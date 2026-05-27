@@ -14,6 +14,14 @@
 
   <body>
     <div class="container filelist-open">
+      <!-- ═════════════════════════════════════════════════════════════ -->
+      <!-- Tab 栏 — 多 Panel 切换                                     -->
+      <!-- ═════════════════════════════════════════════════════════════ -->
+      <div class="tab-bar" id="tab-bar">
+        <div class="tab-list" id="tab-list"></div>
+        <button class="tab-new-btn" id="tab-new-btn" title="New tab">+</button>
+      </div>
+
       <div class="menubar">
         <ul>
           <li id="hamburger-container"><span class="hamburger">&#9776;</span></li>
@@ -106,7 +114,7 @@
         </div>
       </div>
       <div class="editor" id="textEditorDiv" style="display: none"></div>
-      <div class="editor" id="gfxEditorDiv">
+      <div class="editor" id="gfxEditorDiv" style="display: none">
         <canvas id="gfxEditorDrawCanvas" width="8" height="8" style="width: 256px"></canvas>
         <canvas id="gfxEditorPalette" width="16" height="64" style="width: 32px; margin-left: 2px"></canvas>
         <div style="overflow: auto">
