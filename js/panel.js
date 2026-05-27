@@ -1,10 +1,11 @@
 // ---------------------------------------------------------------------------
-// Panel 类 — 一个完整的微型 IDE 单元
+// Panel class — a complete micro IDE unit
 //
 //   Panel = Storage + Compiler + Emulator + EditorManager + DOM
 //
-// 每个 Panel 持有独立的：文件仓库、编译器、模拟器、编辑器管理器和 UI
-// 多个 Panel 可以并列运行，互不干扰
+// Each Panel owns independent: file storage, compiler, emulator,
+// editor manager, and UI. Multiple panels can run side by side with
+// full isolation.
 // ---------------------------------------------------------------------------
 
 import { Storage } from './storage.js';
@@ -17,84 +18,84 @@ import { EditorManager } from './editors.js';
 export class Panel {
   /**
    * @param {object} opts
-   * @param {string} opts.id                  Panel 唯一 ID
-   * @param {string} opts.containerId         面板挂载的 DOM 容器 ID
-   * @param {string} opts.aceDivId           Ace 编辑器挂载的 div ID
-   * @param {string} opts.gfxParentDivId     瓦片编辑器父容器 ID
-   * @param {string} opts.gfxTilesCanvasId   瓦片列表 canvas ID
-   * @param {string} opts.gfxDrawCanvasId    瓦片绘制 canvas ID
-   * @param {string} opts.gfxPaletteCanvasId 调色板 canvas ID
-   * @param {string} opts.emulatorCanvasId   模拟器 canvas ID
-   * @param {string} opts.fileListId         文件列表元素 ID
-   * @param {string} opts.outputLogId        输出日志元素 ID
-   * @param {string} opts.statusBarId        状态栏元素 ID
-   * @param {object} opts.cpuDom             CPU 寄存器 DOM 引用集合
-   * @param {Function} opts.onActivate       面板被激活时的回调
+   * @param {string} opts.id                  Unique panel ID
+   * @param {string} opts.containerId         DOM container ID for this panel
+   * @param {string} opts.aceDivId            Ace editor div ID
+   * @param {string} opts.gfxParentDivId      Tile editor parent container ID
+   * @param {string} opts.gfxTilesCanvasId    Tile list canvas ID
+   * @param {string} opts.gfxDrawCanvasId     Tile draw canvas ID
+   * @param {string} opts.gfxPaletteCanvasId  Palette canvas ID
+   * @param {string} opts.emulatorCanvasId    Emulator canvas ID
+   * @param {string} opts.fileListId          File list element ID
+   * @param {string} opts.outputLogId         Output log element ID
+   * @param {string} opts.statusBarId         Status bar element ID
+   * @param {object} opts.cpuDom              CPU register DOM reference collection
+   * @param {Function} opts.onActivate        Callback when panel is activated
    */
   constructor(opts = {}) {
     this.id = opts.id || 'panel_default';
-    /** 用户自定义标签名（null = 自动生成） */
+    /** User-defined tab label (null = auto-generated) */
     this.customName = null;
     this.onActivate = opts.onActivate || (() => {});
 
-    // ── 核心模块（每 Panel 独立） ──
+    // ── Core modules (each Panel has its own) ──
     this.storage  = new Storage();
     this.compiler = new Compiler({ storage: this.storage });
     this.emulator = new Emulator();
 
-    // ── 编辑器 — 可由外部注入共享实例，也可内部创建 ──
-    this._ownsEditors = false; // 是否自己创建的编辑器实例
+    // ── Editors — can be injected from outside or created internally ──
+    this._ownsEditors = false; // Whether this panel created its own editor instances
     this.gfxEditor = null;
     this.textEditor = null;
     this.editorManager = null;
 
-    /** 编辑器创建参数（注入共享编辑器后会清除） */
+    /** Editor creation params (cleared after shared editors are injected) */
     this._editorOpts = opts;
 
-    // 如果没有注入编辑器，则创建私有实例
+    // Create private editor instances if no shared editors are provided
     if (!opts._sharedEditors) {
       this._createEditors(opts);
     } else {
-      // 使用共享编辑器（由 PanelManager 注入）
+      // Use shared editors (injected by PanelManager)
       this._sharedEditors = opts._sharedEditors;
       this._ownsEditors = false;
     }
 
-    // ── 编译器日志 ──
+    // ── Compiler log output ──
     this.compiler.setLogCallback((str, kind) => {
       this._appendLog(str, kind);
     });
 
-    // ── 模拟器串口 ──
+    // ── Emulator serial output ──
     this.emulator.setSerialCallback((value) => {
       this._appendLog(String.fromCharCode(value), 'serial');
     });
 
-    // ── 模拟器启动标志 ──
-    /** @type {number|null} ROM 入口地址 */
+    // ── Emulator startup state ──
+    /** @type {number|null} ROM entry address */
     this.startAddress = null;
 
-    /** @type {Object<number, [string, number]>} 地址到行的映射 */
+    /** @type {Object<number, [string, number]>} Address-to-line mapping */
     this.addrToLine = {};
 
-    // ── DOM 引用 ──
+    // ── DOM references ──
     this.containerEl = document.getElementById(opts.containerId);
     this.fileListEl  = document.getElementById(opts.fileListId);
     this.outputLogEl = document.getElementById(opts.outputLogId);
     this.statusBarEl = document.getElementById(opts.statusBarId);
     this.emuCanvasEl = document.getElementById(opts.emulatorCanvasId ?? 'emulator_screen_canvas');
 
-    /** @type {object} CPU 寄存器 DOM */
+    /** @type {object} CPU register DOM elements */
     this.cpuDom = opts.cpuDom || {};
 
-    /** 编辑器状态快照（用于 Tab 切换时保存/恢复） */
+    /** Editor state snapshot (saved/restored on tab switch) */
     this._savedCurrentFile = '';
     this._savedCursorPos = {};
     this._savedBreakpoints = [];
     this._savedCpuLine = [null, null];
   }
 
-  /** 创建编辑器实例（仅在首个 Panel 调用） */
+  /** Create editor instances (only called for the first Panel) */
   _createEditors(opts) {
     this._ownsEditors = true;
 
@@ -131,7 +132,7 @@ export class Panel {
   }
 
   /**
-   * 绑定共享编辑器实例（Tab 切换时调用）
+   * Bind shared editor instances (called on tab switch).
    * @param {object} editors { textEditor, gfxEditor, editorManager }
    */
   bindEditors(editors) {
@@ -139,7 +140,7 @@ export class Panel {
     this.gfxEditor = editors.gfxEditor;
     this.editorManager = editors.editorManager;
 
-    // 更新编辑器的 storage / compiler 引用
+    // Update editor storage/compiler references to this panel's instances
     this.textEditor.storage = this.storage;
     this.textEditor.compiler = this.compiler;
     this.gfxEditor.storage = this.storage;
@@ -147,7 +148,7 @@ export class Panel {
     this.editorManager.textEditor = this.textEditor;
     this.editorManager.gfxEditor = this.gfxEditor;
 
-    // 重新绑定 compileCallback（因为旧 Panel 的回调已失效）
+    // Re-bind compile callback (previous panel's callback is stale)
     const origCallback = this.textEditor.compileCallback;
     this.textEditor.compileCallback = () => {
       this.compiler.compile((rom, startAddr, addrToLine) => {
@@ -155,13 +156,13 @@ export class Panel {
       });
     };
 
-    // 重新绑定断点回调
+    // Re-bind breakpoint change callback
     this.textEditor.onBreakpointChange = () => {
       this._updateBreakpoints();
     };
   }
 
-  /** 保存当前编辑器状态到 Panel */
+  /** Save current editor state into this Panel */
   saveEditorState() {
     if (!this.textEditor) return;
     this._savedCurrentFile = this.textEditor.currentFile;
@@ -172,7 +173,7 @@ export class Panel {
     this._savedCpuLine = [this.textEditor.cpuLineFilename, this.textEditor.cpuLineNr];
   }
 
-  /** 从 Panel 恢复编辑器状态 */
+  /** Restore editor state from this Panel */
   restoreEditorState() {
     if (!this.textEditor) return;
     this.textEditor.breakpoints = this._savedBreakpoints.map(b => [...b]);
@@ -183,7 +184,7 @@ export class Panel {
   }
 
   // =======================================================================
-  // 文件管理
+  // File management
   // =======================================================================
 
   addFile(name, content, base) {
@@ -233,9 +234,13 @@ export class Panel {
   }
 
   // =======================================================================
-  // 编译
+  // Compilation
   // =======================================================================
 
+  /**
+   * Compile assembly source code.
+   * @param {string} [entryAsm] Specific entry .asm file to compile
+   */
   compile(entryAsm) {
     this.compiler.compile((rom, startAddr, addrToLine) => {
       if (rom) {
@@ -248,7 +253,7 @@ export class Panel {
   }
 
   // =======================================================================
-  // 模拟器
+  // Emulator
   // =======================================================================
 
   _bootEmulator(rom, startAddr) {
@@ -286,6 +291,10 @@ export class Panel {
     }
   }
 
+  /**
+   * Update CPU register display and highlight current source line.
+   * @param {boolean} afterSingleStep Whether to highlight the current PC line in the editor
+   */
   _updateCpuState(afterSingleStep) {
     this.emulator.renderScreen();
     const pc = this.emulator.getPC();
@@ -307,7 +316,7 @@ export class Panel {
   }
 
   // =======================================================================
-  // 键盘输入路由（每个 Panel 独立处理）
+  // Keyboard input routing (each Panel handles independently)
   // =======================================================================
 
   handleKeyDown(code) {
@@ -341,13 +350,13 @@ export class Panel {
   }
 
   // =======================================================================
-  // 日志
+  // Logging
   // =======================================================================
 
   _appendLog(str, kind) {
     if (!this.outputLogEl) return;
 
-    // null = 清空
+    // null = clear log
     if (str == null) {
       this.outputLogEl.innerHTML = '';
       return;
@@ -358,7 +367,7 @@ export class Panel {
       this.outputLogEl.removeChild(this.outputLogEl.firstChild);
     }
 
-    // ANSI 着色 (仅 stdout)
+    // ANSI colorization (stdout only)
     if (kind === 'stdout') str = this._ansiColors(str);
 
     const node = (kind === 'stderr' || kind === 'serial')
@@ -384,14 +393,14 @@ export class Panel {
       .replace(/\x1B\[0m/g, '</span>');
   }
 
-  // ---- 工具方法 ----
+  // ---- Utility methods ----
 
   _toHex(v, d) {
     return v.toString(16).toUpperCase().padStart(d, '0');
   }
 
   // =======================================================================
-  // 生命周期
+  // Lifecycle
   // =======================================================================
 
   activate() {
@@ -400,12 +409,12 @@ export class Panel {
 
   destroy() {
     this.emulator.destroy();
-    // 其他清理工作...
+    // Additional cleanup...
   }
 }
 
 // ---------------------------------------------------------------------------
-// PanelManager — 管理所有 Panel 实例
+// PanelManager — manages all Panel instances
 // ---------------------------------------------------------------------------
 
 export class PanelManager {
@@ -442,5 +451,5 @@ export class PanelManager {
   }
 }
 
-// 全局单例 PanelManager
+// Global singleton PanelManager
 export const panelManager = new PanelManager();

@@ -5,7 +5,7 @@ import { TokenTooltip } from './ace/sm83tooltip.js';
 import { sm83Completer } from './ace/complete-sm83.js';
 
 // ---------------------------------------------------------------------------
-// 辅助：跟随系统暗色模式
+// Helper: Follow system dark mode preference
 // ---------------------------------------------------------------------------
 const runColorMode = (editor) => {
   if (!window.matchMedia) return;
@@ -18,17 +18,17 @@ const runColorMode = (editor) => {
 };
 
 // ---------------------------------------------------------------------------
-// TextEditor 类
+// TextEditor class
 // ---------------------------------------------------------------------------
 
 export class TextEditor {
   /**
    * @param {object} opts
-   * @param {string} opts.divId               Ace 挂载容器 ID
-   * @param {import('./storage.js').Storage} opts.storage  文件仓库实例
-   * @param {import('./compiler.js').Compiler} opts.compiler 编译器实例
-   * @param {Function} opts.compileCallback   编辑后触发编译的回调
-   * @param {Function} opts.onBreakpointChange 断点变更回调
+   * @param {string} opts.divId               Ace editor mount container ID
+   * @param {import('./storage.js').Storage} opts.storage  File storage instance
+   * @param {import('./compiler.js').Compiler} opts.compiler Compiler instance
+   * @param {Function} opts.compileCallback   Callback to trigger compilation after editing
+   * @param {Function} opts.onBreakpointChange Breakpoint change callback
    */
   constructor({ divId, storage, compiler, compileCallback, onBreakpointChange }) {
     this.storage = storage;
@@ -39,7 +39,7 @@ export class TextEditor {
     /** @type {Array<[string, number]>} [filename, lineNr] */
     this.breakpoints = [];
 
-    /** @type {Object<string, any>} 每文件光标位置 */
+    /** @type {Object<string, any>} Per-file cursor position */
     this.cursorPositionPerFile = {};
 
     this.currentFile = null;
@@ -47,7 +47,7 @@ export class TextEditor {
     this.cpuLineNr = null;
     this.cpuLineMarker = null;
 
-    // 创建 Ace 编辑器
+    // Create Ace editor
     ace.config.set('basePath', 'assets/ace');
 
     const e = ace.edit(divId);
@@ -85,7 +85,7 @@ export class TextEditor {
     this.editor = e;
   }
 
-  // ---- 文件切换 ----
+  // ---- File switching ----
 
   setCurrentFile(filename) {
     if (this.currentFile != null) {
@@ -104,7 +104,7 @@ export class TextEditor {
     this._updateCpuLine();
   }
 
-  // ---- 错误标注 ----
+  // ---- Error annotations ----
 
   updateErrors() {
     const annotations = [];
@@ -115,7 +115,7 @@ export class TextEditor {
     this.editor.session.setAnnotations(annotations);
   }
 
-  // ---- CPU 调试行 ----
+  // ---- CPU debug line ----
 
   setCpuLine(filename, lineNr, scrollToLine) {
     this.cpuLineFilename = filename;
@@ -143,7 +143,7 @@ export class TextEditor {
     }
   }
 
-  // ---- 断点 ----
+  // ---- Breakpoints ----
 
   getBreakpoints() {
     return this.breakpoints.map(([fn, ln]) => [fn, ln, true]);
@@ -176,7 +176,7 @@ export class TextEditor {
     }
   }
 
-  // ---- 显隐 ----
+  // ---- Show / Hide ----
 
   hide() {
     this.editor.renderer.getContainerElement().style.display = 'none';
@@ -188,7 +188,7 @@ export class TextEditor {
     this.editor.renderer.updateFull();
   }
 
-  // ---- 字体大小控制 ----
+  // ---- Font size control ----
 
   _setupFontSize(e) {
     const DEFAULT = 14;
@@ -251,9 +251,9 @@ export class TextEditor {
 }
 
 // ---------------------------------------------------------------------------
-// 向后兼容：模块级导出
-// 这些模块级函数需要一个"注册过的"全局单例来代理。
-// 默认情况下由 main.js 调用 register() 后设置，这里先留空。
+// Backward compatibility: Module-level exports.
+// These module-level functions require a "registered" global singleton to proxy.
+// By default, main.js calls setDefaultInstance() after initialization; left null here.
 // ---------------------------------------------------------------------------
 
 let _defaultInstance = null;

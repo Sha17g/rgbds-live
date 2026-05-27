@@ -5,13 +5,13 @@ import createRgbLink from '../rgbds/rgblink';
 import createRgbFix from '../rgbds/rgbfix';
 
 // ---------------------------------------------------------------------------
-// 正则表达式：解析编译错误/警告中的文件名和行号
-// 例如 "main.asm(42): error: ..." 中提取 main.asm 和 42
+// Regex: Parse file name and line number from compiler error/warning messages.
+// E.g. extract "main.asm" and 42 from "main.asm(42): error: ..."
 // ---------------------------------------------------------------------------
 const LINE_NR_REGEX = /([\w\.]+)[\w\.\:~]*\(([0-9]+)\)/gi;
 
 // ---------------------------------------------------------------------------
-// 解析 map 文件用的正则（提取符号地址、段信息、空闲空间）
+// Regex patterns for parsing map files (symbol addresses, sections, slack space)
 // ---------------------------------------------------------------------------
 const SYM_RE = /^\s*\$([0-9a-f]+) = ([\w\.]+)/;
 const SECTION_TYPE_BANK_RE = /^\s*(\w+) bank #(\d+)/;
@@ -20,65 +20,69 @@ const SLACK_RE = /^\s*SLACK: \$([0-9a-f]+) bytes/;
 const SEC_PREFIX = '__SEC_';
 const EMU_START_NAMES = ['emustart', 'emuStart', 'emu_start'];
 
+/**
+ * Compiler class — wraps the RGBDS toolchain (rgbasm, rgblink, rgbfix).
+ * Each Panel owns its own Compiler instance for full isolation.
+ */
 export class Compiler {
   // -----------------------------------------------------------------------
-  // 实例属性 — 每个 Compiler 实例独立持有
+  // Instance properties — each Compiler instance holds its own state
   // -----------------------------------------------------------------------
 
-  /** @type {import('./storage.js').Storage} 关联的文件仓库 */
+  /** @type {import('./storage.js').Storage} Associated file storage */
   storage;
 
-  /** @type {boolean} 是否正在编译中（防重入） */
+  /** @type {boolean} Whether compilation is in progress (prevents re-entry) */
   busy = false;
 
-  /** @type {boolean} 编译期间又有新请求，标记需要重新编译 */
+  /** @type {boolean} A new compilation was requested while busy; will recompile */
   repeat = false;
 
-  /** @type {number|undefined} 延迟编译的定时器 id */
+  /** @type {number|undefined} Timer ID for delayed compilation (debounce) */
   startDelayTimer;
 
-  /** @type {Function|null} 编译完成回调 */
+  /** @type {Function|null} Callback invoked when compilation completes */
   doneCallback = null;
 
-  /** @type {Function|null} 日志回调（用于输出到 UI 面板） */
+  /** @type {Function|null} Log callback for UI output panel */
   logCallback = null;
 
-  /** @type {Array<[string, string, number, string]>} 错误列表 [type, filename, line, message] */
+  /** @type {Array<[string, string, number, string]>} Error list [type, filename, line, message] */
   errorList = [];
 
-  /** @type {Array} ROM 地址空间的符号表（稀疏数组） */
+  /** @type {Array} Symbol table for ROM address space (sparse array) */
   romSymbols = [];
 
-  /** @type {Array} RAM 地址空间的符号表（稀疏数组） */
+  /** @type {Array} Symbol table for RAM address space (sparse array) */
   ramSymbols = [];
 
-  /** @type {string[]} rgbasm 额外选项 */
+  /** @type {string[]} Additional rgbasm options */
   asmOptions = [];
 
-  /** @type {string[]} rgblink 额外选项 */
+  /** @type {string[]} Additional rgblink options */
   linkOptions = [];
 
-  /** @type {string[]} rgbfix 额外选项 */
+  /** @type {string[]} Additional rgbfix options */
   fixOptions = [];
 
   // -----------------------------------------------------------------------
-  // 构造函数
+  // Constructor
   // -----------------------------------------------------------------------
 
   /**
    * @param {object} [opts]
-   * @param {import('./storage.js').Storage} [opts.storage] 关联的 Storage 实例，默认全局单例
+   * @param {import('./storage.js').Storage} [opts.storage] Associated Storage instance; defaults to global singleton
    */
   constructor(opts = {}) {
     this.storage = opts.storage || storage.getInstance();
   }
 
   // -----------------------------------------------------------------------
-  // 日志
+  // Logging
   // -----------------------------------------------------------------------
 
   /**
-   * 内部日志处理：通知外部回调，同时解析错误/警告行
+   * Internal log handler: notifies external callback and parses error/warning lines.
    */
   logFunction(str, kind) {
     if (this.logCallback) this.logCallback(str, kind);
@@ -98,7 +102,7 @@ export class Compiler {
   errFunction(str)  { this.logFunction(str, 'stderr'); }
 
   // -----------------------------------------------------------------------
-  // 公开 API
+  // Public API
   // -----------------------------------------------------------------------
 
   setLogCallback(callback) { this.logCallback = callback; }
@@ -110,9 +114,9 @@ export class Compiler {
   setFixOptions(options)  { this.fixOptions = options; }
 
   /**
-   * 触发编译
-   * @param {Function} callback  编译完成回调 (rom, startAddress, addrToLine)
-   * @param {string}   [entryAsm] 指定入口 .asm 文件名；不传则编译所有 .asm
+   * Trigger compilation.
+   * @param {Function} callback  Completion callback (rom, startAddress, addrToLine)
+   * @param {string}   [entryAsm] Specific entry .asm file; if omitted, compiles all .asm files
    */
   compile(callback, entryAsm) {
     this.doneCallback = callback;
@@ -125,16 +129,16 @@ export class Compiler {
   }
 
   // -----------------------------------------------------------------------
-  // 编译流程（私有方法）
+  // Compilation pipeline (private methods)
   // -----------------------------------------------------------------------
 
-  /** 延迟触发（500ms 防抖） */
+  /** Delayed trigger with 500ms debounce */
   trigger(entryAsm) {
     if (typeof this.startDelayTimer !== 'undefined') clearTimeout(this.startDelayTimer);
     this.startDelayTimer = setTimeout(() => this.startCompile(entryAsm), 500);
   }
 
-  /** 开始编译：收集 .asm 目标文件 */
+  /** Start compilation: collect .asm target files */
   startCompile(entryAsm) {
     if (this.logCallback) this.logCallback(null, null);
     this.errorList = [];
@@ -145,12 +149,12 @@ export class Compiler {
     let targets = [];
 
     if (entryAsm) {
-      // 多面板模式：只编译指定的入口 .asm + 其 include 依赖
-      // rgbasm 会自动处理 INCLUDE 指令，所以只需要传入口文件
-      // 但 WASM 的虚拟文件系统需要包含所有可能被 include 的文件
+      // Multi-panel mode: only compile the specified entry .asm + its include deps.
+      // rgbasm will handle INCLUDE directives automatically, so only the entry file
+      // is needed, but the WASM virtual filesystem must contain all includable files.
       targets = [entryAsm];
     } else {
-      // 兼容模式：编译所有 .asm
+      // Legacy mode: compile all .asm files
       for (const name of Object.keys(files)) {
         if (name.endsWith('.asm')) targets.push(name);
       }
@@ -159,7 +163,7 @@ export class Compiler {
     this.runRgbAsm(targets, {});
   }
 
-  /** 依次汇编每个 .asm 文件 */
+  /** Assemble each .asm file one by one (Step 1: RGBASM) */
   runRgbAsm(targets, objFiles) {
     const target = targets.pop();
     const args = ['-Wall', ...this.asmOptions, '--color', 'never', '-o', 'output.o', '--', target];
@@ -191,7 +195,7 @@ export class Compiler {
     });
   }
 
-  /** 链接所有 .o 文件 */
+  /** Link all .o files (Step 2: RGBLINK) */
   runRgbLink(objFiles) {
     const args = ['--color', 'never', '-o', 'output.gb', ...this.linkOptions, '-m', 'output.map', '--'];
     for (const name in objFiles) {
@@ -228,7 +232,7 @@ export class Compiler {
     });
   }
 
-  /** 修复 ROM 头 */
+  /** Fix ROM header (Step 3: RGBFIX) */
   runRgbFix(inputRom, mapFile) {
     const args = ['--color', 'never', '-p', '0xff', '-v', ...this.fixOptions, '--', 'output.gb'];
     this.infoFunction('Running: rgbfix ' + args.join(' '));
@@ -249,7 +253,7 @@ export class Compiler {
     });
   }
 
-  /** 编译失败 */
+  /** Handle build failure: reset state and optionally retry */
   buildFailed() {
     this.infoFunction('Build failed');
     if (this.repeat) {
@@ -261,7 +265,7 @@ export class Compiler {
     }
   }
 
-  /** 编译成功：解析 map 文件，提取符号和地址映射 */
+  /** Handle build success: parse map file, extract symbols and address-to-line mappings */
   buildDone(romFile, mapFile) {
     if (this.repeat) {
       this.repeat = false;
@@ -282,7 +286,7 @@ export class Compiler {
           let sym = m[2];
 
           if (sym.startsWith(SEC_PREFIX)) {
-            // __SEC_<lineHex>_<filename> — 行号到地址的映射
+            // __SEC_<lineHex>_<filename> — maps address to source line
             sym = sym.substr(6);
             const file = sym.substr(sym.indexOf('_') + 1).substr(sym.substr(sym.indexOf('_') + 1).indexOf('_') + 1);
             const lineNr = parseInt(sym.split('_')[1], 16);
@@ -330,7 +334,7 @@ export class Compiler {
 }
 
 // ---------------------------------------------------------------------------
-// 向后兼容：模块级导出（代理到默认单例）
+// Backward compatibility: Module-level exports (proxying to default singleton)
 // ---------------------------------------------------------------------------
 
 const defaultInstance = new Compiler();

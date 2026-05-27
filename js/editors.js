@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// EditorManager 类 — 统一管理 TextEditor / GfxEditor 切换和文件类型判定
+// EditorManager class — manages TextEditor / GfxEditor switching and file type detection
 // ---------------------------------------------------------------------------
 
 export class EditorManager {
@@ -20,7 +20,7 @@ export class EditorManager {
     this.nullEditorDiv = document.getElementById('nullEditorDiv');
   }
 
-  /** 空编辑器占位 */
+  /** Null editor placeholder */
   _nullEditor() {
     const self = this;
     return {
@@ -63,7 +63,7 @@ export class EditorManager {
 }
 
 // ---------------------------------------------------------------------------
-// 向后兼容：模块级导出（代理到默认单例）
+// Backward compatibility: Module-level exports (proxy to default singleton)
 // ---------------------------------------------------------------------------
 
 let _defaultInstance = null;

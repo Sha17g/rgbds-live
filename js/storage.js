@@ -24,7 +24,7 @@ export class Storage {
   /** @type {Object<string, string|Uint8Array>} */
   files;
 
-  /** @type {Function|null} 加载完成后更新 UI 的回调 */
+  /** @type {Function|null} Callback to update UI after loading completes */
   onUIUpdate = null;
 
   constructor() {
@@ -206,9 +206,9 @@ function urlToGistID(url) {
 }
 
 // ---------------------------------------------------------------------------
-// 向后兼容：模块级导出（单例 + 方法代理）
-// Storage 的 loadZip 中需要用到 editors.getFileType，这里通过一个可设置的
-// 模块级函数来解决循环依赖问题。
+// Backward compatibility: Module-level exports (singleton + method proxies).
+// Storage.loadZip needs editors.getFileType; a settable module-level function
+// is used here to resolve the circular dependency.
 // ---------------------------------------------------------------------------
 
 /** @type {(name: string) => string} */
@@ -224,7 +224,7 @@ export function setEditorsGetFileType(fn) {
   editors_getFileType = fn;
 }
 
-// 默认单例
+// Default singleton instance
 const defaultInstance = new Storage();
 let _defaultInstance = null;
 

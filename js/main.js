@@ -1,10 +1,10 @@
 // ---------------------------------------------------------------------------
-// main.js — 应用入口 + Tab 管理器
+// main.js — Application entry + Tab manager
 //
-// 架构：
-//   - 一组共享的 DOM 编辑器（Ace、GfxEditor），由首个 Panel 创建
-//   - 每个 Tab = 一个 Panel（独立 Storage/Compiler/Emulator）
-//   - 切换 Tab 时：保存旧 Panel 编辑器状态 → 交换编辑器引用 → 恢复新 Panel 状态
+// Architecture:
+//   - A shared set of DOM editors (Ace, GfxEditor) created by the first Panel
+//   - Each Tab = one Panel (independent Storage/Compiler/Emulator)
+//   - Tab switch: Save old Panel editor state → swap editor refs → restore new Panel state
 // ---------------------------------------------------------------------------
 
 import * as compilerMod from './compiler.js';
@@ -16,7 +16,7 @@ import * as gfxEditorMod from './gfx-editor.js';
 
 import { Panel, panelManager } from './panel.js';
 
-// 为 DEV 模式保留调试入口
+// Preserve debug entry for DEV mode
 globalThis.emulator = emulatorMod;
 if (import.meta.env.DEV) {
   globalThis._rgbdsDebug = {
@@ -30,21 +30,25 @@ if (import.meta.env.DEV) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// Tab 管理器
+// Tab Manager
 // ═══════════════════════════════════════════════════════════════════════════
 
-/** 共享编辑器实例（由首个 Panel 创建后提取） */
+/** Shared editor instances (extracted after first Panel creation) */
 let sharedEditors = null;
 
 /** @type {Panel[]} */
 const tabPanels = [];
 
-/** @type {number} 当前活动 Tab 索引 */
+/** @type {number} Current active tab index */
 let activeTabIndex = -1;
 
-/** 自增 Tab ID */
+/** Auto-increment Tab ID */
 let tabIdCounter = 1;
 
+/**
+ * Build the options object for Panel construction,
+ * providing all DOM element IDs the Panel needs.
+ */
 function createPanelOpts() {
   return {
     containerId: 'container',
@@ -69,11 +73,16 @@ function createPanelOpts() {
   };
 }
 
+/**
+ * Create a new Panel instance.
+ * The first Panel creates editors; subsequent Panels reuse shared editors.
+ * @returns {Panel}
+ */
 function createNewPanel() {
   const opts = createPanelOpts();
 
   if (!sharedEditors) {
-    // 第一个 Tab：让 Panel 自己创建编辑器（_ownsEditors = true）
+    // First tab: let Panel create its own editors (_ownsEditors = true)
     const panel = new Panel(opts);
     sharedEditors = {
       textEditor: panel.textEditor,
@@ -83,14 +92,14 @@ function createNewPanel() {
     return panel;
   }
 
-  // 后续 Tab：不创建编辑器，稍后 bindEditors
+  // Subsequent tabs: skip editor creation, use bindEditors later
   opts._sharedEditors = sharedEditors;
   const panel = new Panel(opts);
   panel.bindEditors(sharedEditors);
   return panel;
 }
 
-/** 保存当前 Panel 的编辑器状态，切换到目标 Panel */
+/** Save current Panel's editor state, then switch to target Panel */
 function switchToTab(index, force = false) {
   if (!force && (index === activeTabIndex || index < 0 || index >= tabPanels.length)) return;
   if (index < 0 || index >= tabPanels.length) return;
@@ -98,7 +107,7 @@ function switchToTab(index, force = false) {
     tabPanels[activeTabIndex].saveEditorState();
   }
 
-  // 停止当前模拟器
+  // Stop current emulator
   if (activeTabIndex >= 0 && tabPanels[activeTabIndex]) {
     tabPanels[activeTabIndex].destroyEmulator();
   }
@@ -106,49 +115,54 @@ function switchToTab(index, force = false) {
   activeTabIndex = index;
   const newPanel = tabPanels[index];
 
-  // 绑定共享编辑器引用到新 Panel 的 Storage / Compiler
+  // Bind shared editor refs to new Panel's Storage / Compiler
   if (sharedEditors && !newPanel._ownsEditors) {
     newPanel.bindEditors(sharedEditors);
   }
 
-  // 恢复新 Panel 的编辑器状态
+  // Restore new Panel's editor state
   newPanel.restoreEditorState();
 
-  // 更新 UI
+  // Update UI
   updateTabBar();
   updateAllUI();
   refreshCompilerLog(newPanel);
 
-  // 切换默认实例引用
+  // Switch default instance references
   setDefaultInstances(newPanel);
 
-  // 重新调起编译器日志回调（新 Panel 的 logCallback）
+  // Re-bind compiler log callback (new Panel's logCallback)
   newPanel.compiler.setLogCallback((str, kind) => {
     appendLog(str, kind);
   });
 
-  // 重新调起模拟器串口回调
+  // Re-bind emulator serial callback
   newPanel.emulator.setSerialCallback((value) => {
     const formatted = toHex2(value);
     document.getElementById('serial_log').innerText = '$' + formatted;
   });
 
-  // 自动打开第一个文件并编译
+  // Auto-open first file and compile
   const files = Object.keys(newPanel.storage.getFiles());
   if (files.length > 0) {
     const currentFile = newPanel._savedCurrentFile || files[0];
     newPanel.editorManager.setCurrentFile(currentFile);
   }
 
-  // 延迟编译
+  // Deferred compile
   setTimeout(() => {
     compileCurrentPanel();
   }, 50);
 }
 
+/**
+ * Add a new tab via user prompt.
+ * Optionally copy files from the current tab or start from the template project.
+ * @returns {number} The index of the newly created tab, or -1 if cancelled.
+ */
 function addNewTab() {
   const name = prompt('New tab name (leave empty for auto):', '');
-  if (name === null) return -1; // 用户取消
+  if (name === null) return -1; // User cancelled
   const copyFromCurrent = getActivePanel()
     ? confirm('Copy files from current tab?')
     : false;
@@ -160,13 +174,13 @@ function addNewTab() {
   panelManager.addPanel(panel);
 
   if (copyFromCurrent && getActivePanel()) {
-    // 复制当前 Tab 的所有文件
+    // Copy all files from current tab
     const srcFiles = getActivePanel().storage.getFiles();
     for (const [filename, content] of Object.entries(srcFiles)) {
       panel.storage.update(filename, content);
     }
   } else {
-    // 用 starting_project 初始化新 Tab
+    // Initialize new tab with starting_project
     panel.storage.reset();
     panel.storage.autoLoad();
   }
@@ -176,35 +190,48 @@ function addNewTab() {
   return idx;
 }
 
+/**
+ * Close the tab at the given index.
+ * Destroys its emulator and Panel, removes it from the tab list and PanelManager.
+ * If the closed tab was active, switches to the nearest remaining tab.
+ * @param {number} index
+ */
 function closeTab(index) {
-  if (tabPanels.length <= 1) return; // 至少保留一个
+  if (tabPanels.length <= 1) return; // Keep at least one
   const panel = tabPanels[index];
   const wasActive = (index === activeTabIndex);
 
   panel.destroyEmulator();
   panel.destroy();
 
-  // 从 PanelManager 移除
+  // Remove from PanelManager
   panelManager.removePanel(panel);
 
   tabPanels.splice(index, 1);
 
-  // 修正 activeTabIndex
+  // Fix up activeTabIndex
   if (activeTabIndex > index) {
     activeTabIndex--;
   } else if (activeTabIndex >= tabPanels.length) {
     activeTabIndex = tabPanels.length - 1;
   }
 
-  // 刷新标签栏
+  // Refresh tab bar
   updateTabBar();
 
-  // 如果关闭的是活动 Tab，splice 后同位置已是不同 Panel，须强制切换
+  // If closing the active tab, the same position now holds a different Panel after splice → force switch
   if (wasActive) {
     switchToTab(activeTabIndex, true);
   }
 }
 
+/**
+ * Determine the display label for a tab.
+ * Uses the custom name if set, otherwise the first file's basename, or fallback "Tab N".
+ * @param {Panel} panel
+ * @param {number} index
+ * @returns {string}
+ */
 function getTabLabel(panel, index) {
   if (panel.customName) return panel.customName;
   const files = Object.keys(panel.storage.getFiles());
@@ -212,6 +239,10 @@ function getTabLabel(panel, index) {
   return 'Tab ' + (index + 1);
 }
 
+/**
+ * Re-render the tab bar UI from the current tabPanels array.
+ * Highlights the active tab, wires up rename (dblclick) and close (×) interactions.
+ */
 function updateTabBar() {
   const tabList = document.getElementById('tab-list');
   if (!tabList) return;
@@ -227,7 +258,7 @@ function updateTabBar() {
     name.textContent = getTabLabel(panel, i);
     const files = Object.keys(panel.storage.getFiles());
     name.title = files.join(', ') || 'Double-click to rename';
-    // 双击编辑标签名
+    // Double-click to rename tab
     name.addEventListener('dblclick', (e) => {
       e.stopPropagation();
       const newName = prompt('Rename tab:', panel.customName || getTabLabel(panel, i));
@@ -254,9 +285,13 @@ function updateTabBar() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 当前 Panel 便捷引用
+// Current Panel convenience reference
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Get the currently active Panel.
+ * @returns {Panel|undefined}
+ */
 function getActivePanel() {
   return tabPanels[activeTabIndex];
 }
@@ -271,7 +306,7 @@ function setDefaultInstances(panel) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 全局状态
+// Global State
 // ═══════════════════════════════════════════════════════════════════════════
 
 let emu_view = '';
@@ -283,6 +318,11 @@ export function isDarkMode() {
   return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
 }
 
+/**
+ * Safely escape HTML special characters by rendering through a temporary DOM element.
+ * @param {string} str
+ * @returns {string}
+ */
 function escapeHTML(str) {
   const d = document.createElement('div');
   d.innerText = str;
@@ -290,9 +330,15 @@ function escapeHTML(str) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 编译器日志输出
+// Compiler Log Output
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Append a line to the compiler output log element.
+ * Passing (null, null) clears the log.
+ * @param {string|null} str
+ * @param {string|null} kind - CSS class name for styling
+ */
 function appendLog(str, kind) {
   const output = document.getElementById('output');
   if (str == null && kind == null) {
@@ -304,11 +350,11 @@ function appendLog(str, kind) {
 }
 
 function refreshCompilerLog(panel) {
-  // 清空并重新绑定日志（在 switchToTab 中处理）
+  // Clear and re-bind log (handled in switchToTab)
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 编译入口 — 编译当前活动 Panel
+// Compilation Entry — compile the active Panel
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function compileCurrentPanel() {
@@ -335,7 +381,7 @@ export function compileCurrentPanel() {
     panel._bootEmulator(rom, _start_address);
     updateBreakpoints();
 
-    // 构建 line_to_addr 反查表
+    // Build line_to_addr reverse lookup table
     const line_to_addr = {};
     for (const addrStr in _addr_to_line) {
       const addr = parseInt(addrStr);
@@ -350,15 +396,18 @@ export function compileCurrentPanel() {
   });
 }
 
-// 向后兼容
+// Backward compatibility
 export function compileCode() {
   compileCurrentPanel();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 模拟器管理
+// Emulator Management
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Destroy the current panel's emulator instance and clear ROM state.
+ */
 function destroyEmulator() {
   const panel = getActivePanel();
   if (panel) panel.destroyEmulator();
@@ -369,6 +418,10 @@ function destroyEmulator() {
   }
 }
 
+/**
+ * Boot (or re-boot) the emulator for the active Panel.
+ * @param {boolean} jump_to_pc - Whether to jump the editor cursor to the current PC address.
+ */
 function initEmulator(jump_to_pc) {
   const panel = getActivePanel();
   if (typeof rom === 'undefined' || !panel) return;
@@ -377,6 +430,12 @@ function initEmulator(jump_to_pc) {
   updateBreakpoints();
 }
 
+/**
+ * Advance the emulator by one unit (single step, frame, or continuous run).
+ * If the emulator is not available, initialises it first.
+ * @param {'single'|'frame'|'run'} step_type
+ * @returns {boolean} Whether the emulator is still running after stepping.
+ */
 function stepEmulator(step_type) {
   const panel = getActivePanel();
   const emulator = panel ? panel.emulator : null;
@@ -390,7 +449,7 @@ function stepEmulator(step_type) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 断点
+// Breakpoints
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function updateBreakpoints() {
@@ -412,9 +471,15 @@ export function updateBreakpoints() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 键盘输入
+// Keyboard Input
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Forward a keyboard event to the active Panel's Game Boy key handler.
+ * The Escape key also stops auto-run.
+ * @param {string} code - KeyboardEvent.code value
+ * @param {boolean} down - true = keydown, false = keyup
+ */
 function handleGBKey(code, down) {
   const panel = getActivePanel();
   if (panel) {
@@ -428,20 +493,26 @@ function handleGBKey(code, down) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 十六进制工具
+// Hex Utilities
 // ═══════════════════════════════════════════════════════════════════════════
 
 const hexTable = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, '0'));
 const toHex2 = (num) => hexTable[num & 0xff];
 const toHex4 = (num) => hexTable[(num >> 8) & 0xff] + hexTable[num & 0xff];
 
+/**
+ * Format a number as a hex string with a `$` prefix.
+ * @param {number} num
+ * @param {number} digits - 2 or 4 hex digits
+ * @returns {string}
+ */
 function toHex(num, digits) {
   if (digits === 2) return '$' + toHex2(num);
   return '$' + toHex4(num);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CPU 状态更新
+// CPU State Update
 // ═══════════════════════════════════════════════════════════════════════════
 
 const cpuDom = {
@@ -454,6 +525,11 @@ const cpuDom = {
   flags: document.getElementById('cpu_flags'),
 };
 
+/**
+ * Refresh CPU register display, render the emulator screen,
+ * update VRAM / text views, and highlight the current source line.
+ * @param {boolean} afterSingleStep - If true, scroll the editor to the PC line.
+ */
 function updateCpuState(afterSingleStep) {
   const panel = getActivePanel();
   const emulator = panel ? panel.emulator : null;
@@ -483,6 +559,10 @@ function updateCpuState(afterSingleStep) {
   updateTextView();
 }
 
+/**
+ * Redraw the VRAM canvas based on the current emu_view mode
+ * (vram, bg0, or bg1). Skipped when the canvas is hidden.
+ */
 function updateVRamCanvas() {
   const canvas = document.getElementById('emulator_vram_canvas');
   if (!canvas || canvas.style.display === 'none') return;
@@ -496,6 +576,10 @@ function updateVRamCanvas() {
   if (emu_view === 'bg1')  emulator.renderBackground(canvas, 1);
 }
 
+/**
+ * Render the text-based memory viewer (ROM, WRAM, HRAM, IO registers, serial log)
+ * into the emulator_display_text element, depending on emu_view.
+ */
 function updateTextView() {
   const display_text = document.getElementById('emulator_display_text');
   if (!display_text || display_text.style.display === 'none') return;
@@ -591,7 +675,7 @@ function updateTextView() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 文件列表
+// File List
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function updateFileList() {
@@ -629,6 +713,12 @@ function updateAllUI() {
   updateCpuState();
 }
 
+/**
+ * Delete a file from the active Panel's storage.
+ * If it was the current file, switch to the first remaining file.
+ * Prevents deletion when only one file remains.
+ * @param {string} name
+ */
 function deleteFile(name) {
   const panel = getActivePanel();
   if (!panel) return;
@@ -642,6 +732,11 @@ function deleteFile(name) {
   updateFileList();
 }
 
+/**
+ * Show one emulator display tab (screen canvas / VRAM canvas / text display)
+ * and hide the others.
+ * @param {string} type - Element ID of the tab to show
+ */
 function showTabType(type) {
   const tabTypes = ['emulator_screen_canvas', 'emulator_vram_canvas', 'emulator_display_text'];
   tabTypes.forEach((tabType) => {
@@ -650,17 +745,17 @@ function showTabType(type) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// 初始化
+// Initialization
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function init() {
-  // ── 创建默认 Tab（索引 0） ──
+  // ── Create default Tab (index 0) ──
   const defaultPanel = createNewPanel();
   tabPanels.push(defaultPanel);
   panelManager.addPanel(defaultPanel);
   activeTabIndex = 0;
 
-  // 绑定共享编辑器引用到本文档范围
+  // Bind shared editor refs to local scope
   if (!sharedEditors && defaultPanel.textEditor) {
     sharedEditors = {
       textEditor: defaultPanel.textEditor,
@@ -669,18 +764,18 @@ export function init() {
     };
   }
 
-  // 设置默认实例
+  // Set default instances
   setDefaultInstances(defaultPanel);
 
-  // 给模块级代理绑定
+  // Bind module-level proxies
   textEditorMod.setDefaultInstance(defaultPanel.textEditor);
   gfxEditorMod.setDefaultInstance(defaultPanel.gfxEditor);
 
-  // ── Tab 栏事件 ──
+  // ── Tab bar events ──
   document.getElementById('tab-new-btn').addEventListener('click', addNewTab);
   updateTabBar();
 
-  // ── Storage UI 更新回调（已由 Panel 内部处理） ──
+  // ── Storage UI update callback (handled internally by Panel) ──
   const storage = defaultPanel.storage;
   const editors = defaultPanel.editorManager;
 
@@ -688,16 +783,16 @@ export function init() {
     editors.setCurrentFile(Object.keys(storage.getFiles()).sort()[0]);
   });
 
-  // URL 参数：编译器选项
+  // URL params: compiler options
   const urlParams = new URLSearchParams(window.location.search);
   applyCompilerOptions(urlParams);
 
-  // 自动加载工程
+  // Auto-load project
   storage.autoLoad();
   editors.setCurrentFile(Object.keys(storage.getFiles()).pop());
   updateFileList();
 
-  // ── 文件列表点击 ──
+  // ── File list click ──
   document.getElementById('filelist').onclick = function (e) {
     const text = e.target.childNodes[0] && e.target.childNodes[0].wholeText;
     if (!text) return;
@@ -709,12 +804,12 @@ export function init() {
     updateCpuState();
   };
 
-  // ── 侧栏汉堡按钮 ──
+  // ── Sidebar hamburger button ──
   document.getElementById('hamburger-container').onclick = function () {
     document.querySelector('body .container:first-child').classList.toggle('filelist-open');
   };
 
-  // ── 新文件对话框 ──
+  // ── New file dialog ──
   document.getElementById('newfile').onclick = function () {
     document.getElementById('newfiledialog').style.display = 'block';
   };
@@ -760,7 +855,7 @@ export function init() {
     document.getElementById('newfiledialog').style.display = 'none';
   };
 
-  // ── 删除文件 ──
+  // ── Delete file ──
   document.getElementById('delfile').onclick = function () {
     const panel = getActivePanel();
     if (!panel) return;
@@ -769,7 +864,7 @@ export function init() {
     }
   };
 
-  // ── 新工程 ──
+  // ── New project ──
   document.getElementById('newproject').onclick = function () {
     const panel = getActivePanel();
     if (!panel) return;
@@ -779,12 +874,12 @@ export function init() {
     updateFileList();
   };
 
-  // ── 编译器日志 ──
+  // ── Compiler log ──
   defaultPanel.compiler.setLogCallback((str, kind) => {
     appendLog(str, kind);
   });
 
-  // ── 模拟器串口 ──
+  // ── Emulator serial ──
   defaultPanel.emulator.setSerialCallback((value) => {
     const formatted = toHex2(value);
     document.getElementById('serial_log').innerText = '$' + formatted;
@@ -796,7 +891,7 @@ export function init() {
 
   compileCode();
 
-  // ── 模拟器控制按钮 ──
+  // ── Emulator control buttons ──
   document.getElementById('cpu_single_step').onclick = () => stepEmulator('single');
   document.getElementById('cpu_frame_step').onclick  = () => stepEmulator('frame');
   document.getElementById('cpu_reset').onclick       = () => initEmulator(true);
@@ -811,7 +906,7 @@ export function init() {
     }
   };
 
-  // ── 键盘 ──
+  // ── Keyboard ──
   const kbInput = document.getElementById('emulator_screen_container');
   kbInput.tabIndex = -1;
   kbInput.onkeydown = function (e) { handleGBKey(e.code, true);  e.preventDefault(); };
@@ -827,7 +922,7 @@ export function init() {
     }
   };
 
-  // ── 模拟器视图 Tab ──
+  // ── Emulator view tabs ──
   document.getElementById('emulator_display_screen').onclick = () => { showTabType('emulator_screen_canvas'); emu_view = 'display'; };
   document.getElementById('emulator_display_vram').onclick   = () => { showTabType('emulator_vram_canvas'); emu_view = 'vram'; updateVRamCanvas(); };
   document.getElementById('emulator_display_bg0').onclick    = () => { showTabType('emulator_vram_canvas'); emu_view = 'bg0'; updateVRamCanvas(); };
@@ -838,7 +933,7 @@ export function init() {
   document.getElementById('emulator_display_io').onclick     = () => { showTabType('emulator_display_text'); emu_view = 'io'; updateTextView(); };
   document.getElementById('emulator_display_serial').onclick = () => { showTabType('emulator_display_text'); emu_view = 'serial'; updateTextView(); };
 
-  // ── 下载 ROM ──
+  // ── Download ROM ──
   document.getElementById('download_rom').onclick = function () {
     if (typeof rom === 'undefined') return;
     const element = document.createElement('a');
@@ -852,7 +947,7 @@ export function init() {
     window.URL.revokeObjectURL(url);
   };
 
-  // ── 导入对话框 ──
+  // ── Import dialog ──
   document.getElementById('importmenu').onclick = () => { document.getElementById('importdialog').style.display = 'block'; };
   document.getElementById('importdialog').onclick = function (e) {
     if (e.target === document.getElementById('importdialog')) document.getElementById('importdialog').style.display = 'none';
@@ -872,7 +967,7 @@ export function init() {
     }
   };
 
-  // ── 导出对话框 ──
+  // ── Export dialog ──
   document.getElementById('exportmenu').onclick = () => {
     const panel = getActivePanel();
     if (!panel) return;
@@ -904,14 +999,14 @@ export function init() {
     if (panel) panel.storage.downloadZip();
   };
 
-  // ── 信息对话框 ──
+  // ── Info dialog ──
   document.getElementById('infomenu').onclick = () => { document.getElementById('infodialog').style.display = 'block'; };
   document.getElementById('infodialog').onclick = function (e) {
     if (e.target === document.getElementById('infodialog')) document.getElementById('infodialog').style.display = 'none';
   };
   document.getElementById('infodialogclose').onclick = () => { document.getElementById('infodialog').style.display = 'none'; };
 
-  // ── 设置 ──
+  // ── Settings ──
   const { config } = storageMod;
   document.getElementById('auto_url_update').checked = config.autoUrl;
   document.getElementById('auto_url_update').onclick = function () {
@@ -958,7 +1053,7 @@ export function init() {
   }
 }
 
-// ── 辅助 ──
+// ── Helpers ──
 
 function applyCompilerOptions(urlParams) {
   const panel = getActivePanel();

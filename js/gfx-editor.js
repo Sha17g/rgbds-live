@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// GfxEditor 类 — 瓦片/精灵编辑器
+// GfxEditor class — Tile/Sprite editor
 // ---------------------------------------------------------------------------
 
 const COLORS = [0xffc2f0c4, 0xffa8b95a, 0xff6e601e, 0xff001b2d];
@@ -7,12 +7,12 @@ const COLORS = [0xffc2f0c4, 0xffa8b95a, 0xff6e601e, 0xff001b2d];
 export class GfxEditor {
   /**
    * @param {object} opts
-   * @param {string} opts.parentDivId          父容器 ID
-   * @param {string} opts.tilesCanvasId        瓦片列表 canvas ID
-   * @param {string} opts.drawCanvasId         绘制区 canvas ID
-   * @param {string} opts.paletteCanvasId      调色板 canvas ID
-   * @param {import('./storage.js').Storage} opts.storage  文件仓库实例
-   * @param {Function} opts.onFileChange       文件内容变更回调
+   * @param {string} opts.parentDivId          Parent container ID
+   * @param {string} opts.tilesCanvasId        Tile list canvas ID
+   * @param {string} opts.drawCanvasId         Draw area canvas ID
+   * @param {string} opts.paletteCanvasId      Palette canvas ID
+   * @param {import('./storage.js').Storage} opts.storage  File storage instance
+   * @param {Function} opts.onFileChange       File content change callback
    */
   constructor({ parentDivId, tilesCanvasId, drawCanvasId, paletteCanvasId, storage, onFileChange }) {
     this.storage = storage;
@@ -31,7 +31,7 @@ export class GfxEditor {
     this._updatePalette();
   }
 
-  // ---- 事件绑定 ----
+  // ---- Event binding ----
 
   _bindEvents() {
     const self = this;
@@ -65,7 +65,7 @@ export class GfxEditor {
     };
   }
 
-  // ---- 文件载入 ----
+  // ---- File loading ----
 
   setCurrentFile(filename) {
     this.currentFile = filename;
@@ -92,7 +92,7 @@ export class GfxEditor {
     ctx.putImageData(imageData, 0, 0);
   }
 
-  // ---- 选中瓦片 ----
+  // ---- Tile selection ----
 
   setTileIndex(index) {
     const data = this.storage.getFiles()[this.currentFile];
@@ -107,7 +107,7 @@ export class GfxEditor {
     ctx.putImageData(imageData, 0, 0);
   }
 
-  // ---- 显隐 ----
+  // ---- Show / Hide ----
 
   hide() {
     this.mainDiv.style.display = 'none';
@@ -117,7 +117,7 @@ export class GfxEditor {
     this.mainDiv.style.display = '';
   }
 
-  // ---- 内部方法 ----
+  // ---- Internal methods ----
 
   _drawPixel(x, y, color) {
     const data = this.storage.getFiles()[this.currentFile];
@@ -132,7 +132,7 @@ export class GfxEditor {
     this.storage.update(this.currentFile, data);
     this.onFileChange();
 
-    // 同步更新瓦片列表
+    // Synchronously update tile list
     const ctx = this.tileCanvas.getContext('2d');
     const imageData = ctx.getImageData(0, 0, this.tileCanvas.width, this.tileCanvas.height);
     const pixels = new Uint32Array(imageData.data.buffer);
@@ -162,7 +162,7 @@ export class GfxEditor {
   }
 }
 
-// ---- 静态工具函数 ----
+// ---- Static utility functions ----
 
 function _decodeTile(data, pixels, pixelIndex, pitch) {
   for (let y = 0; y < 8; y++) {
@@ -178,7 +178,7 @@ function _decodeTile(data, pixels, pixelIndex, pitch) {
 }
 
 // ---------------------------------------------------------------------------
-// 向后兼容：模块级导出（代理到默认单例）
+// Backward compatibility: Module-level exports (proxy to default singleton)
 // ---------------------------------------------------------------------------
 
 let _defaultInstance = null;

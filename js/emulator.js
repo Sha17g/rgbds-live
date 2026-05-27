@@ -1,11 +1,11 @@
 import Binjgb from '../binjgb/out/binjgb.js';
 
-// WASM 模块是只读共享的，所有 Emulator 实例共用
+// WASM module is read-only and shared across all Emulator instances
 const Module = await Binjgb();
 
 // ---------------------------------------------------------------------------
-// 模块级 serial callback — WASM 会直接调用这个函数名
-// 默认转发给单例实例的 onSerial 回调
+// Module-level serial callback — WASM calls this function by name directly.
+// Forwards to the current active instance's onSerial callback.
 // ---------------------------------------------------------------------------
 let _serialRelay = null;
 
@@ -15,41 +15,41 @@ export function serialCallback(value) {
 
 export class Emulator {
   // -----------------------------------------------------------------------
-  // 实例属性
+  // Instance properties
   // -----------------------------------------------------------------------
 
-  /** @type {number|undefined} WASM 模拟器指针 */
+  /** @type {number|undefined} WASM emulator pointer */
   e;
 
-  /** @type {number} ROM 分配大小 */
+  /** @type {number} Allocated ROM size */
   romSize = 0;
 
-  /** @type {CanvasRenderingContext2D|null} 主屏幕 canvas 2D 上下文 */
+  /** @type {CanvasRenderingContext2D|null} Main screen canvas 2D context */
   canvasCtx = null;
 
-  /** @type {ImageData|null} 主屏幕图像数据 */
+  /** @type {ImageData|null} Main screen image data */
   canvasImageData = null;
 
-  /** @type {AudioContext|null} Web Audio 上下文 */
+  /** @type {AudioContext|null} Web Audio context */
   audioCtx = null;
 
-  /** @type {number} 音频时间基准 */
+  /** @type {number} Audio time base */
   audioTime = 0;
 
-  /** @type {Function|null} 串行输出回调 */
+  /** @type {Function|null} Serial output callback */
   onSerial = null;
 
-  /** @type {number} 音频缓冲区大小 */
+  /** @type {number} Audio buffer size */
   audioBufferSize = 2048;
 
   // -----------------------------------------------------------------------
-  // 初始化 / 销毁
+  // Initialization / Destruction
   // -----------------------------------------------------------------------
 
   /**
-   * 初始化模拟器
-   * @param {HTMLCanvasElement|null} canvas 渲染目标 canvas
-   * @param {Uint8Array} romData ROM 数据
+   * Initialize the emulator
+   * @param {HTMLCanvasElement|null} canvas Render target canvas
+   * @param {Uint8Array} romData ROM data
    */
   init(canvas, romData) {
     if (this.isAvailable()) this.destroy();
@@ -94,12 +94,13 @@ export class Emulator {
   }
 
   // -----------------------------------------------------------------------
-  // 运行控制
+  // Execution control
   // -----------------------------------------------------------------------
 
   /**
+   * Run the emulator for a specified step type.
    * @param {string} stepType 'single' | 'frame' | 'run'
-   * @returns {boolean} 是否命中断点或非法指令
+   * @returns {boolean} Whether a breakpoint or illegal instruction was hit
    */
   step(stepType) {
     if (!this.isAvailable()) return;
@@ -107,7 +108,7 @@ export class Emulator {
     if (stepType === 'single') ticks += 1;
     else if (stepType === 'frame') ticks += 70224;
 
-    // 路由 serial callback 到当前实例
+    // Route serial callback to the current instance
     _serialRelay = (value) => { if (this.onSerial) this.onSerial(value); };
 
     while (true) {
@@ -126,7 +127,7 @@ export class Emulator {
   }
 
   // -----------------------------------------------------------------------
-  // 渲染
+  // Rendering
   // -----------------------------------------------------------------------
 
   renderScreen() {
@@ -165,7 +166,7 @@ export class Emulator {
   }
 
   // -----------------------------------------------------------------------
-  // 内存读取
+  // Memory access
   // -----------------------------------------------------------------------
 
   getWRam() {
@@ -191,7 +192,7 @@ export class Emulator {
   }
 
   // -----------------------------------------------------------------------
-  // CPU 寄存器
+  // CPU registers
   // -----------------------------------------------------------------------
 
   getPC()  { return Module._emulator_get_PC(this.e); }
@@ -213,7 +214,7 @@ export class Emulator {
   }
 
   // -----------------------------------------------------------------------
-  // 断点
+  // Breakpoints
   // -----------------------------------------------------------------------
 
   setBreakpoint(pc) {
@@ -227,7 +228,7 @@ export class Emulator {
   }
 
   // -----------------------------------------------------------------------
-  // 手柄输入
+  // Joypad input
   // -----------------------------------------------------------------------
 
   setKeyPad(key, down) {
@@ -243,19 +244,19 @@ export class Emulator {
   }
 
   // -----------------------------------------------------------------------
-  // 串行输出
+  // Serial output
   // -----------------------------------------------------------------------
 
   /**
-   * 设置串行输出回调
-   * @param {Function} callback 回调函数 (value) => void
+   * Set the serial output callback.
+   * @param {Function} callback Callback function (value) => void
    */
   setSerialCallback(callback) {
     this.onSerial = callback;
   }
 
   // -----------------------------------------------------------------------
-  // 内部：音频处理
+  // Internal: Audio processing
   // -----------------------------------------------------------------------
 
   _processAudioBuffer() {
@@ -284,7 +285,7 @@ export class Emulator {
 }
 
 // ---------------------------------------------------------------------------
-// 向后兼容：模块级导出（代理到默认单例）
+// Backward compatibility: Module-level exports (proxying to default singleton)
 // ---------------------------------------------------------------------------
 
 const defaultInstance = new Emulator();
