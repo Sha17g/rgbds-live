@@ -1,0 +1,1 @@
+/opt/homebrew/Cellar/emscripten/5.0.7/libexec/em++ -O3 -flto -sEXPORT_ES6=1 -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web -sMODULARIZE=1 -sEXPORT_NAME=createRgbFix "-sEXPORTED_RUNTIME_METHODS=['FS']" @CMakeFiles/rgbfix.dir/objects1.rsp -o ../../out/rgbfix.js

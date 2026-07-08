@@ -1,0 +1,11 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/wangshang/Project1/rgbds-live/build/cmake_install.cmake",
+		"/Users/wangshang/Project1/rgbds-live/build/rgbds/cmake_install.cmake",
+		"/Users/wangshang/Project1/rgbds-live/build/rgbds/src/cmake_install.cmake",
+		"/Users/wangshang/Project1/rgbds-live/build/rgbds/test/cmake_install.cmake",
+		"/Users/wangshang/Project1/rgbds-live/build/binjgb/cmake_install.cmake"
+	],
+	"Parallel" : false
+}

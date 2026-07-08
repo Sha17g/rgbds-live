@@ -1,0 +1,1 @@
+/opt/homebrew/Cellar/emscripten/5.0.7/libexec/em++ -O3 -flto -sEXPORT_ES6=1 -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web -sMODULARIZE=1 @CMakeFiles/rgbgfx_test.dir/objects1.rsp -o /Users/wangshang/Project1/rgbds-live/rgbds/test/gfx/rgbgfx_test.js @CMakeFiles/rgbgfx_test.dir/linkLibs.rsp

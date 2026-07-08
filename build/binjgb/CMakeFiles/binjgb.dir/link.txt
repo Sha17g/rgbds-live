@@ -1,0 +1,1 @@
+/opt/homebrew/Cellar/emscripten/5.0.7/libexec/emcc -O3 -flto -sEXPORT_ES6=1 -sALLOW_MEMORY_GROWTH=1 -sENVIRONMENT=web -sMODULARIZE=1 -sMALLOC=emmalloc -sEXIT_RUNTIME=0 -sFILESYSTEM=0 "-sEXPORTED_RUNTIME_METHODS=['HEAP8']" -sEXPORTED_FUNCTIONS=@/Users/wangshang/Project1/rgbds-live/binjgb/src/emscripten/exported.json @CMakeFiles/binjgb.dir/objects1.rsp -o ../out/binjgb.js

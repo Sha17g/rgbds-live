@@ -1,0 +1,55 @@
+
+# Consider dependencies only in project.
+set(CMAKE_DEPENDS_IN_PROJECT_ONLY OFF)
+
+# The set of languages for which implicit dependencies are needed:
+set(CMAKE_DEPENDS_LANGUAGES
+  )
+
+# The set of dependency files which are needed:
+set(CMAKE_DEPENDS_DEPENDENCY_FILES
+  "/Users/wangshang/Project1/rgbds-live/build/rgbds/src/_version.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/_version.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/_version.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/actions.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/actions.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/actions.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/charmap.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/charmap.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/charmap.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/fixpoint.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/fixpoint.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/fixpoint.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/format.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/format.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/format.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/fstack.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/fstack.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/fstack.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/lexer.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/lexer.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/lexer.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/macro.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/macro.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/macro.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/main.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/main.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/main.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/opt.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/opt.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/opt.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/output.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/output.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/output.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/parser.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/parser.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/parser.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/rpn.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/rpn.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/rpn.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/section.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/section.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/section.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/symbol.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/symbol.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/symbol.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/warning.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/asm/warning.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/asm/warning.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/backtrace.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/backtrace.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/backtrace.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/cli.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/cli.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/cli.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/diagnostics.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/diagnostics.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/diagnostics.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/extern/getopt.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/extern/getopt.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/extern/getopt.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/extern/utf8decoder.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/extern/utf8decoder.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/extern/utf8decoder.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/linkdefs.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/linkdefs.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/linkdefs.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/opmath.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/opmath.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/opmath.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/style.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/style.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/style.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/usage.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/usage.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/usage.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/util.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/util.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/util.cpp.o.d"
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/verbosity.cpp" "rgbds/src/CMakeFiles/rgbasm.dir/verbosity.cpp.o" "gcc" "rgbds/src/CMakeFiles/rgbasm.dir/verbosity.cpp.o.d"
+  )
+
+# Pairs of files generated by the same build rule.
+set(CMAKE_MULTIPLE_OUTPUT_PAIRS
+  "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/parser.hpp" "/Users/wangshang/Project1/rgbds-live/rgbds/src/asm/parser.cpp"
+  )
+
+
+# Targets to which this target links which contain Fortran sources.
+set(CMAKE_Fortran_TARGET_LINKED_INFO_FILES
+  )
+
+# Targets to which this target links which contain Fortran sources.
+set(CMAKE_Fortran_TARGET_FORWARD_LINKED_INFO_FILES
+  )
+
+# Fortran module output directory.
+set(CMAKE_Fortran_TARGET_MODULE_DIR "")
